@@ -127,6 +127,12 @@ function Details({ order, teams, me, onChanged }: { order: Order; teams: Team[];
           </button>
         )}
       </div>
+      {order.ai_summary && order.status !== "done" && (
+        <div className="ai-summary">
+          <b>סיכום AI מההודעות של הלקוח</b>
+          <div>{order.ai_summary}</div>
+        </div>
+      )}
       {order.field_issue && order.status === "approved" && <div className="warn-line pad">⚠ מהשטח: {order.field_issue}</div>}
       {edit && <EditSheet order={order} onClose={() => setEdit(false)} onSaved={onChanged} />}
     </>
@@ -192,6 +198,7 @@ function authorName(m: Message, members: Member[], me: Me): string {
   if (m.author_id === me.id) return "אני";
   const a = members.find((x) => x.id === m.author_id);
   if (a) return a.role === "field" ? a.name : `${a.name} · ${ROLE_LABEL[a.role]}`;
+  if (!m.author_id) return "לקוח · וואטסאפ";
   return "";
 }
 

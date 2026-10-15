@@ -99,6 +99,25 @@ select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000099
 select count(*) = 0 as ok from public.orders \gset
 \if :ok \else \echo FAIL stranger sees orders \quit \endif
 
+-- וואטסאפ: רק השרת יכול לפתוח הזמנה, וכמה הודעות מאותו לקוח נכנסות לאותה הזמנה
+reset role;
+select not has_function_privilege('authenticated', 'public.wa_order_for(text, text)', 'execute')
+   and not has_table_privilege('authenticated', 'public.wa_inbox', 'select') as ok \gset
+\if :ok \else \echo FAIL app users can reach whatsapp internals \quit \endif
+set role service_role;
+select order_id as waoid, created from public.wa_order_for('972500000001', 'דנה') \gset
+\if :created \else \echo FAIL first whatsapp message did not open order \quit \endif
+select (not created) and order_id = :waoid as ok from public.wa_order_for('972500000001', 'דנה') \gset
+\if :ok \else \echo FAIL second whatsapp message opened another order \quit \endif
+select client_phone = '0500000001' and source = 'whatsapp' and status = 'new' as ok from public.orders where id = :waoid \gset
+\if :ok \else \echo FAIL whatsapp order fields \quit \endif
+insert into public.messages (order_id, kind, body) values (:waoid, 'text', 'שלט 2 על 1');
+reset role;
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
+select count(*) = 1 as ok from public.messages where order_id = :waoid and author_id is null and kind = 'text' \gset
+\if :ok \else \echo FAIL manager cannot see customer message \quit \endif
+
 reset role;
 select count(*) as events from public.events;
 \echo ALL TESTS PASSED

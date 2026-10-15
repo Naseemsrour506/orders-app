@@ -416,3 +416,6 @@ enabled = true
 
 [functions.notify]
 verify_jwt = false
+
+[functions.whatsapp]
+verify_jwt = false
