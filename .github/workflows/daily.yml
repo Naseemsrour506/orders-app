@@ -1,0 +1,29 @@
+name: משימה יומית
+
+# 07:00 בשעון קיץ בישראל (06:00 בחורף): מחיקת קבצים ישנים, גיבוי, סיכום בוקר לצוותים.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/daily.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backup-${{ github.run_number }}
+          path: backup/
+          retention-days: 90
+          if-no-files-found: ignore
