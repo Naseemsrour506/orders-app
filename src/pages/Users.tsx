@@ -36,7 +36,7 @@ export function Users() {
 
   return (
     <div className="screen">
-      <Bar title="משתמשים" sub="כניסה בקישור אישי, בלי סיסמה" avatar="מ" />
+      <Bar title="צוות" sub="כניסה בקישור אישי, בלי סיסמה" avatar="מ" />
       <ManagerTabs />
       <div className="scroll">
         <ErrorLine error={error} />
@@ -51,7 +51,7 @@ export function Users() {
           </button>
         ))}
         <button className="cta" onClick={() => setAdding(true)}>
-          + הוספת משתמש
+          + הוספה לצוות
         </button>
         <p className="sub">
           {FIELD_TEAMS && "לכל צוות שטח יש קישור אחד שעובד בכל הטלפונים של הצוות. "}אם קישור הגיע לידיים לא נכונות או שטלפון אבד, לחצו על המשתמש
@@ -110,7 +110,7 @@ function AddSheet({
       onCreated(name || ROLE_LABEL[role], joinLink(r.token));
     });
   return (
-    <Sheet title="משתמש חדש" onClose={onClose}>
+    <Sheet title="חבר צוות חדש" onClose={onClose}>
       <div className="seg">
         {((FIELD_TEAMS ? ["field", "designer", "manager"] : ["designer", "manager"]) as Role[]).map((r) => (
           <button key={r} className={r === role ? "on" : ""} onClick={() => setRole(r)}>

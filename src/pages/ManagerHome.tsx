@@ -15,7 +15,7 @@ export function ManagerTabs() {
       items={[
         { to: "/", label: "הזמנות", active: pathname === "/" },
         ...(FIELD_TEAMS ? [{ to: "/teams", label: "צוותים", active: pathname.startsWith("/teams") }] : []),
-        { to: "/users", label: "משתמשים", active: pathname.startsWith("/users") },
+        { to: "/users", label: "צוות", active: pathname.startsWith("/users") },
       ]}
     />
   );
