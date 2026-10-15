@@ -11,7 +11,7 @@ import { fmtDay, fmtTime, nextWorkday, todayIL } from "../lib/dates";
 import { useLive } from "../lib/hooks";
 import { supabase } from "../lib/supabase";
 import type { Me, Member, Message, Order, Team } from "../lib/types";
-import { ROLE_LABEL } from "../lib/types";
+import { AI_DETAIL_LABEL, ROLE_LABEL } from "../lib/types";
 
 export function OrderPage() {
   const id = Number(useParams().id);
@@ -127,15 +127,43 @@ function Details({ order, teams, me, onChanged }: { order: Order; teams: Team[];
           </button>
         )}
       </div>
-      {order.ai_summary && order.status !== "done" && (
-        <div className="ai-summary">
-          <b>סיכום AI מההודעות של הלקוח</b>
-          <div>{order.ai_summary}</div>
-        </div>
-      )}
+      {order.source === "whatsapp" && order.status !== "done" && <AiDetailsBlock order={order} />}
       {order.field_issue && order.status === "approved" && <div className="warn-line pad">⚠ מהשטח: {order.field_issue}</div>}
       {edit && <EditSheet order={order} onClose={() => setEdit(false)} onSaved={onChanged} />}
     </>
+  );
+}
+
+function AiDetailsBlock({ order }: { order: Order }) {
+  const d = order.ai_details ?? {};
+  const rows = AI_DETAIL_LABEL.filter(([k]) => d[k]);
+  const missing = d.missing ?? [];
+  if (!rows.length && !missing.length && !order.ai_summary) return null;
+  return (
+    <div className="ai-summary">
+      <b>מה הלקוח ביקש (מולא אוטומטית מהוואטסאפ)</b>
+      {order.ai_summary && <div className="ai-line">{order.ai_summary}</div>}
+      {rows.length > 0 && (
+        <dl className="ai-grid">
+          {rows.map(([k, label]) => (
+            <div key={k}>
+              <dt>{label}</dt>
+              <dd>{d[k]}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {missing.length > 0 && (
+        <div className="ai-missing">
+          <span>חסר:</span>
+          {missing.map((m) => (
+            <span key={m} className="chip w">
+              {m}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

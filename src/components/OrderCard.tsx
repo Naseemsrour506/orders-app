@@ -18,7 +18,12 @@ export function OrderCard({ o, teams, showTeam }: { o: Order; teams?: Team[]; sh
   if (isLate(o)) tags.push({ t: "באיחור", c: "r" });
   if (o.urgent && o.status !== "done") tags.push({ t: "דחוף", c: "w" });
   if (o.field_issue && o.status === "approved") tags.push({ t: "⚠ הערה מהשטח", c: "w" });
-  if (o.source === "whatsapp" && o.status === "new") tags.push({ t: "מוואטסאפ", c: "g" });
+  const fromWa = o.source === "whatsapp" && o.status === "new";
+  const missing = fromWa ? (o.ai_details?.missing?.length ?? 0) : 0;
+  if (fromWa) tags.push({ t: "מוואטסאפ", c: "g" });
+  if (missing) tags.push({ t: `חסרים ${missing} פרטים`, c: "w" });
+  const d = o.ai_details ?? {};
+  const spec = fromWa ? [d.size, d.quantity && `כמות ${d.quantity}`, d.material, d.city].filter(Boolean).join(" · ") : "";
   return (
     <Link to={`/order/${o.id}`} className={`card ${isCarried(o) || isLate(o) ? "carry" : ""}`}>
       <div className="row">
@@ -36,6 +41,7 @@ export function OrderCard({ o, teams, showTeam }: { o: Order; teams?: Team[]; sh
           .filter(Boolean)
           .join(" · ")}
       </div>
+      {spec && <div className="spec">{spec}</div>}
       {tags.length > 0 && (
         <div className="tags">
           {tags.map((t) => (
