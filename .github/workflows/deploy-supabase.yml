@@ -1,6 +1,6 @@
 name: עדכון Supabase
 
-# מעדכן את מסד הנתונים ואת פונקציית ההתראות בכל שינוי ב-main.
+# מעדכן את מסד הנתונים, את פונקציית ההתראות ואת קליטת הוואטסאפ בכל שינוי ב-main.
 # צריך שלושה Secrets במאגר: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD
 on:
   push:
@@ -31,3 +31,18 @@ jobs:
       - run: supabase link --project-ref "$PROJECT_REF"
       - run: supabase db push --include-all
       - run: supabase functions deploy notify --project-ref "$PROJECT_REF" --no-verify-jwt
+      - run: supabase functions deploy whatsapp --project-ref "$PROJECT_REF" --no-verify-jwt
+      # סודות הוואטסאפ וה-AI עוברים מ-GitHub ל-Supabase. סוד שלא הוגדר פשוט מדולג.
+      - name: סודות וואטסאפ ו-AI
+        env:
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_AUTO_REPLY: ${{ secrets.WHATSAPP_AUTO_REPLY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          args=()
+          for k in WHATSAPP_VERIFY_TOKEN WHATSAPP_APP_SECRET WHATSAPP_TOKEN WHATSAPP_AUTO_REPLY ANTHROPIC_API_KEY; do
+            if [ -n "${!k}" ]; then args+=("$k=${!k}"); fi
+          done
+          if [ ${#args[@]} -gt 0 ]; then supabase secrets set --project-ref "$PROJECT_REF" "${args[@]}"; fi

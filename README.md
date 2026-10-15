@@ -10,6 +10,7 @@
 
 | | |
 |---|---|
+| הזמנות אוטומטיות מוואטסאפ | לקוחות כותבים למספר העסקי, ה-AI פותח וממלא הזמנה (ראו למטה) |
 | שיתוף מווטסאפ (אנדרואיד) | "שתף" ← "הזמנות": הזמנה חדשה או הוספה להזמנה פתוחה |
 | הזמנה ידנית | כפתור + במסך הראשי |
 | כרטיס הזמנה | שיחה עם הגרפיקאי: טקסט, תמונות, קבצים, הקלטות קול |
@@ -80,9 +81,57 @@ select 'https://orders-app.pages.dev/join#t=' || public.bootstrap_manager('נס�
 
 בווטסאפ: מסמנים הודעה ותמונה ← שתף ← **הזמנות**. אם ווטסאפ משתף רק חלק, משתפים פעם שנייה ובוחרים "הוספה להזמנה פתוחה".
 
+## הזמנות אוטומטיות מוואטסאפ (מספר עסקי נפרד)
+
+לקוח כותב ושולח תמונות למספר העסקי ← Meta מעבירה כל הודעה ל-Supabase ← ההודעות נשמרות בכרטיס הזמנה (לקוח שכבר יש לו הזמנה פתוחה מהשבועיים האחרונים ממשיך באותו כרטיס) ← כשהלקוח מפסיק לשלוח לחצי דקה, ה-AI ממלא מה מזמינים, שם, כתובת ותאריך, וכותב סיכום ← המנהל מקבל התראה "הזמנה חדשה מוואטסאפ". הלקוח מקבל פעם אחת תשובה אוטומטית עם מספר ההזמנה.
+
+- ה-AI ממלא פרטים רק כל עוד ההזמנה "חדשה". שדה שהמנהל שינה ידנית לא נדרס.
+- המספר העסקי עובד דרך החיבור הרשמי של Meta, ולכן **לא פתוח באפליקציית וואטסאפ בטלפון**. ההודעות מופיעות באפליקציית ההזמנות.
+
+### הקמה
+
+**א. Anthropic (ה-AI)**
+1. נכנסים ל-[console.anthropic.com](https://console.anthropic.com), נרשמים, ובחלק **Billing** טוענים 5$.
+2. **API Keys ← Create Key**. שומרים את המפתח.
+
+**ב. Meta (וואטסאפ)**
+1. נכנסים ל-[developers.facebook.com](https://developers.facebook.com) עם הפייסבוק, **My Apps ← Create App**, בוחרים **Connect with customers through WhatsApp** ותיק עסקי (Business portfolio) חדש בשם העסק.
+2. בתפריט **WhatsApp ← API Setup** מקבלים מספר בדיקה של Meta. מוסיפים את הטלפון הפרטי שלכם ב-**To** (עד 5 מספרים) כדי לבדוק לפני שה-SIM מוכן.
+3. **App settings ← Basic**: מעתיקים את **App secret**. באותו מסך, ב-**Privacy Policy URL** מדביקים `https://orders-app-5rl.pages.dev/privacy` ושומרים.
+4. טוקן קבוע: [business.facebook.com](https://business.facebook.com) ← **Settings ← Users ← System users ← Add** (Admin) ← **Assign assets**: האפליקציה (Full control) ← **Generate token**, מסמנים `whatsapp_business_messaging` ו-`whatsapp_business_management`, תוקף **Never**. שומרים את הטוקן.
+5. בוחרים מילה סודית כלשהי (למשל `orders-` ועוד כמה אותיות ומספרים). זה ה-Verify token.
+
+**ג. GitHub Secrets** (כמו בשלב 3 למעלה), ארבעה סודות חדשים:
+
+| שם | ערך |
+|---|---|
+| `WHATSAPP_VERIFY_TOKEN` | המילה הסודית שבחרתם |
+| `WHATSAPP_APP_SECRET` | ה-App secret |
+| `WHATSAPP_TOKEN` | הטוקן הקבוע |
+| `ANTHROPIC_API_KEY` | המפתח מ-Anthropic |
+
+לא חובה: `WHATSAPP_AUTO_REPLY` לנוסח אחר של התשובה האוטומטית (`{id}` הופך למספר ההזמנה, `off` מבטל).
+
+אחר כך: **Actions ← עדכון Supabase ← Run workflow**.
+
+**ד. חיבור הכתובת ב-Meta**
+1. **WhatsApp ← Configuration ← Webhook ← Edit**:
+   - Callback URL: `https://soyfdodhkvqwrmirqhmm.supabase.co/functions/v1/whatsapp`
+   - Verify token: המילה הסודית
+2. **Verify and save**, ואז ב-**Webhook fields** מסמנים **messages** ← Subscribe.
+3. בדיקה: שולחים מהטלפון הפרטי הודעה ותמונה למספר הבדיקה. אחרי כחצי דקה מופיעה הזמנה באפליקציה.
+
+**ה. המספר האמיתי (SIM חדש)**
+1. ה-SIM בטלפון כלשהו, רק כדי לקבל SMS או שיחה עם קוד. המספר **לא** רשום בשום אפליקציית וואטסאפ (אם כן, מוחקים שם את החשבון קודם).
+2. **WhatsApp ← API Setup ← Add phone number**: שם תצוגה (שם העסק), קטגוריה, מספר, קוד אימות.
+3. Meta עשויה לבקש אמצעי תשלום. תשובות ללקוח עד 24 שעות מההודעה שלו בחינם, וזה כל מה שהמערכת שולחת.
+4. בראש מסך האפליקציה ב-Meta מעבירים את **App Mode** ל-**Live**. בלי זה מגיעות רק הודעות בדיקה.
+
 ## עלויות
 
 0 ₪ בהתחלה. כשהקבצים מתקרבים ל-1 GB עוברים בתוכנית של Supabase ל-Pro (כ-25$ לחודש).
+
+וואטסאפ: הודעות נכנסות ותשובה בתוך 24 שעות בחינם. AI: בערך 20 עד 60 אגורות להזמנה (תלוי בכמה תמונות והודעות), מתוך הקרדיט שנטען ב-Anthropic.
 
 ## לפיתוח
 
@@ -94,5 +143,6 @@ npm run dev
 
 - `supabase/migrations`: הסכמה וההרשאות. כל ההרשאות נאכפות במסד הנתונים (RLS ופונקציות).
 - `supabase/functions/notify`: שליחת התראות Web Push. מפתחות VAPID נוצרים לבד בקריאה הראשונה.
+- `supabase/functions/whatsapp`: קליטת הודעות מ-WhatsApp Cloud API ומילוי ההזמנה עם Claude.
 - `scripts/daily.mjs`: המשימה היומית (`.github/workflows/daily.yml`).
 - `test/run.sh`: בדיקת זרימה והרשאות על Postgres ריק (רצה גם ב-CI).

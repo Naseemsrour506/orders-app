@@ -44,6 +44,9 @@ export interface Order {
   field_issue: string;
   final_file_path: string | null;
   final_file_name: string | null;
+  source: "app" | "whatsapp";
+  wa_phone: string | null;
+  ai_summary: string;
   created_at: string;
   updated_at: string;
 }

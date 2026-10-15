@@ -18,6 +18,7 @@ export function OrderCard({ o, teams, showTeam }: { o: Order; teams?: Team[]; sh
   if (isLate(o)) tags.push({ t: "באיחור", c: "r" });
   if (o.urgent && o.status !== "done") tags.push({ t: "דחוף", c: "w" });
   if (o.field_issue && o.status === "approved") tags.push({ t: "⚠ הערה מהשטח", c: "w" });
+  if (o.source === "whatsapp" && o.status === "new") tags.push({ t: "מוואטסאפ", c: "g" });
   return (
     <Link to={`/order/${o.id}`} className={`card ${isCarried(o) || isLate(o) ? "carry" : ""}`}>
       <div className="row">

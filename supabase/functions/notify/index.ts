@@ -62,6 +62,10 @@ function message(e: Event, title: string, actor?: Member): { title: string; body
       return { title: "הערה מהשטח", body: `${t}: ${e.body}` };
     case "message":
       return { title: actor?.name ?? "הודעה חדשה", body: e.body ? `${t}: ${e.body}` : t };
+    case "wa_new":
+      return { title: "הזמנה חדשה מוואטסאפ", body: t };
+    case "wa_message":
+      return { title: "הלקוח כתב בוואטסאפ", body: e.body ? `${t}: ${e.body}` : t };
     default:
       return { title: "עדכון", body: t };
   }
@@ -80,6 +84,8 @@ function recipients(e: Event, members: Member[]): Member[] {
     case "final":
     case "done":
     case "field_issue":
+    case "wa_new":
+    case "wa_message":
       return notActor(managers);
     case "approved":
     case "morning":
