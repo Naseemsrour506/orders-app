@@ -110,7 +110,7 @@ function TaskRow({ t, queued, onOpen }: { t: FieldTask; queued?: boolean; onOpen
       <span className="body">
         <span className="row">
           <span className="tt">{t.title || "ללא כותרת"}</span>
-          {t.carried && !t.done && <span className="chip r">מאתמול · {fmtDay(t.scheduled_date)}</span>}
+          {t.carried && !t.done && <span className="chip r">{fmtDay(t.scheduled_date) === "אתמול" ? "מאתמול" : `מאתמול · ${fmtDay(t.scheduled_date)}`}</span>}
           {!t.carried && t.urgent && !t.done && <span className="chip w">דחוף</span>}
           {queued && <span className="chip">ממתין לקליטה</span>}
         </span>
