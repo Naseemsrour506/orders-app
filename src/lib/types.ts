@@ -1,3 +1,5 @@
+import { FIELD_TEAMS } from "./features";
+
 export type Role = "manager" | "designer" | "field";
 export type Status = "new" | "design" | "review" | "fix" | "approved" | "done";
 export type MessageKind = "text" | "image" | "file" | "audio" | "draft" | "final" | "system";
@@ -90,7 +92,7 @@ export const STATUS_LABEL: Record<Status, string> = {
   design: "בעבודה",
   review: "ממתין לאישור",
   fix: "חזר לתיקון",
-  approved: "מאושר לביצוע",
+  approved: FIELD_TEAMS ? "מאושר לביצוע" : "אושר",
   done: "בוצע",
 };
 

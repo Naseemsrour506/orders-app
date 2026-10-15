@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { fmtDay, todayIL } from "../lib/dates";
-import type { Order, Team } from "../lib/types";
+import { FIELD_TEAMS } from "../lib/features";
+import type { Order, Role, Team } from "../lib/types";
 import { StatusChip } from "./ui";
 
 export function isLate(o: Order): boolean {
@@ -8,36 +9,54 @@ export function isLate(o: Order): boolean {
 }
 
 export function isCarried(o: Order): boolean {
-  return o.status === "approved" && !!o.scheduled_date && o.scheduled_date < todayIL();
+  return FIELD_TEAMS && o.status === "approved" && !!o.scheduled_date && o.scheduled_date < todayIL();
 }
 
-export function OrderCard({ o, teams, showTeam }: { o: Order; teams?: Team[]; showTeam?: boolean }) {
+/** שורה אחת שאומרת מה צריך לקרות עכשיו, ומי צריך לעשות את זה */
+function waiting(o: Order, role?: Role): { t: string; mine: boolean } | null {
+  if (role === "manager") {
+    if (o.status === "new") return { t: "מחכה לך: לשלוח לגרפיקאי", mine: true };
+    if (o.status === "review") return { t: "מחכה לך: לאשר את הטיוטה", mine: true };
+    if (o.status === "design") return { t: "מחכה לגרפיקאי: טיוטה", mine: false };
+    if (o.status === "fix") return { t: "מחכה לגרפיקאי: תיקון", mine: false };
+  }
+  if (role === "designer") {
+    if (o.status === "design") return { t: "מחכה לך: טיוטה", mine: true };
+    if (o.status === "fix") return { t: "מחכה לך: תיקון", mine: true };
+    if (o.status === "review") return { t: "מחכה למנהל: אישור", mine: false };
+  }
+  return null;
+}
+
+export function OrderCard({ o, teams, showTeam, role }: { o: Order; teams?: Team[]; showTeam?: boolean; role?: Role }) {
   const team = teams?.find((t) => t.id === o.team_id);
   const tags: { t: string; c: string }[] = [];
   if (isCarried(o)) tags.push({ t: "מאתמול", c: "r" });
   if (isLate(o)) tags.push({ t: "באיחור", c: "r" });
-  if (o.urgent && o.status !== "done") tags.push({ t: "דחוף", c: "w" });
+  if (o.urgent && o.status !== "done" && (FIELD_TEAMS || o.status !== "approved")) tags.push({ t: "דחוף", c: "w" });
   if (o.field_issue && o.status === "approved") tags.push({ t: "⚠ הערה מהשטח", c: "w" });
   if (o.source === "whatsapp" && o.status === "new") tags.push({ t: "מוואטסאפ", c: "g" });
+  const wait = waiting(o, role);
   return (
     <Link to={`/order/${o.id}`} className={`card ${isCarried(o) || isLate(o) ? "carry" : ""}`}>
       <div className="row">
-        <span className="num">#{o.id}</span>
+        <span className="tt">{o.title || "ללא כותרת"}</span>
         <StatusChip status={o.status} />
       </div>
-      <div className="tt">{o.title || "ללא כותרת"}</div>
       <div className="sub">
         {[
+          `#${o.id}`,
           o.client_name,
-          o.status === "approved" && o.scheduled_date ? fmtDay(o.scheduled_date) : null,
+          FIELD_TEAMS && o.status === "approved" && o.scheduled_date ? fmtDay(o.scheduled_date) : null,
           showTeam && team ? team.name : null,
           (o.status === "design" || o.status === "fix") && o.design_due ? `עד ${fmtDay(o.design_due)}` : null,
         ]
           .filter(Boolean)
           .join(" · ")}
       </div>
-      {tags.length > 0 && (
+      {(wait || tags.length > 0) && (
         <div className="tags">
+          {wait && <span className={`wait ${wait.mine ? "mine" : ""}`}>{wait.t}</span>}
           {tags.map((t) => (
             <span key={t.t} className={`chip ${t.c}`}>
               {t.t}

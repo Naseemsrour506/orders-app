@@ -6,6 +6,7 @@ import { loadMembers, loadTeams } from "../lib/data";
 import { useLive } from "../lib/hooks";
 import { ROLE_LABEL, type Member, type Role } from "../lib/types";
 import { ManagerTabs } from "./ManagerHome";
+import { FIELD_TEAMS } from "../lib/features";
 
 /** המנהל מוסיף משתמשים ושולח להם קישור אישי בווטסאפ */
 export function Users() {
@@ -40,7 +41,7 @@ export function Users() {
       <div className="scroll">
         <ErrorLine error={error} />
         {!data && !error && <Empty>טוען…</Empty>}
-        {members.map((m) => (
+        {members.filter((m) => FIELD_TEAMS || m.role !== "field").map((m) => (
           <button key={m.id} className={`card member ${m.active ? "" : "off"}`} onClick={() => setMenu(m)}>
             <div className="row">
               <span className="tt">{m.name}</span>
@@ -53,7 +54,7 @@ export function Users() {
           + הוספת משתמש
         </button>
         <p className="sub">
-          לכל צוות שטח יש קישור אחד שעובד בכל הטלפונים של הצוות. אם קישור הגיע לידיים לא נכונות או שטלפון אבד, לחצו על המשתמש
+          {FIELD_TEAMS && "לכל צוות שטח יש קישור אחד שעובד בכל הטלפונים של הצוות. "}אם קישור הגיע לידיים לא נכונות או שטלפון אבד, לחצו על המשתמש
           וצרו קישור חדש.
         </p>
       </div>
@@ -96,7 +97,7 @@ function AddSheet({
   onCreated: (name: string, url: string) => void;
 }) {
   const [name, setName] = useState("");
-  const [role, setRole] = useState<Role>("field");
+  const [role, setRole] = useState<Role>(FIELD_TEAMS ? "field" : "designer");
   const [team, setTeam] = useState(teams[0]?.id ?? 1);
   const { busy, run } = useBusy();
   const create = () =>
@@ -111,7 +112,7 @@ function AddSheet({
   return (
     <Sheet title="משתמש חדש" onClose={onClose}>
       <div className="seg">
-        {(["field", "designer", "manager"] as Role[]).map((r) => (
+        {((FIELD_TEAMS ? ["field", "designer", "manager"] : ["designer", "manager"]) as Role[]).map((r) => (
           <button key={r} className={r === role ? "on" : ""} onClick={() => setRole(r)}>
             {ROLE_LABEL[r]}
           </button>

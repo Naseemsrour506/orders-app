@@ -24,10 +24,10 @@ export function DesignerHome() {
             <div className="sec">
               הכדור אצלך <span className="count">{mine.length}</span>
             </div>
-            {mine.length ? mine.map((o) => <OrderCard key={o.id} o={o} />) : <Empty>אין עבודות שמחכות לך 🎉</Empty>}
+            {mine.length ? mine.map((o) => <OrderCard key={o.id} o={o} role="designer" />) : <Empty>אין עבודות שמחכות לך 🎉</Empty>}
             {waiting.length > 0 && <div className="sec">ממתין לאישור המנהל</div>}
             {waiting.map((o) => (
-              <OrderCard key={o.id} o={o} />
+              <OrderCard key={o.id} o={o} role="designer" />
             ))}
             {approved.length > 0 && <div className="sec">אושרו לאחרונה</div>}
             {approved.map((o) => (
