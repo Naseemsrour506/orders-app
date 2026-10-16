@@ -3,7 +3,8 @@
 // GET  - אימות הכתובת מול Meta (hub.challenge)
 // POST - הודעה חדשה: נשמרת בכרטיס ההזמנה של אותו לקוח (או בהזמנה חדשה),
 //        ואחרי שהלקוח מסיים לשלוח, ה-AI ממלא את פרטי ההזמנה והמנהל מקבל התראה.
-// POST /send - מהאפליקציה: גרפיקאי או מנהל שולחים למנהל בוואטסאפ מה לבקש מהלקוח, והמנהל מעביר ללקוח.
+// POST /send - מהאפליקציה, למנהל בוואטסאפ: {"kind":"design"} שולח את העיצוב האחרון של ההזמנה,
+//        או {"kind":"ask","text":...} מה לבקש מהלקוח, והמנהל מעביר ללקוח.
 //        {"order_id": 1003, "text": "...", "asked": ["מידות"]}. דורש משתמש מחובר.
 //
 // סודות (Supabase ← Edge Functions ← Secrets, או דרך GitHub Secrets):
@@ -135,6 +136,17 @@ async function sendText(phoneNumberId: string, to: string, body: string) {
   await graph(`${phoneNumberId}/messages`, {
     method: "POST",
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body } }),
+  });
+}
+
+/** שולח קובץ מקישור, כתמונה או כמסמך, עם כיתוב */
+async function sendFile(phoneNumberId: string, to: string, link: string, mime: string, caption: string, filename: string) {
+  const media = mime.startsWith("image/")
+    ? { type: "image", image: { link, caption } }
+    : { type: "document", document: { link, caption, filename } };
+  await graph(`${phoneNumberId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ messaging_product: "whatsapp", to, ...media }),
   });
 }
 
@@ -426,18 +438,59 @@ async function answerCustomer(orderId: number, phoneNumberId: string, to: string
   await db.from("messages").insert({ order_id: orderId, kind: "system", body: `נשלח ללקוח בוואטסאפ: ${body}` });
 }
 
+const DETAIL_LABEL: Record<string, string> = {
+  product: "מוצר",
+  size: "מידות",
+  quantity: "כמות",
+  material: "חומר",
+  print_text: "טקסט",
+  design: "עיצוב",
+  lighting: "תאורה",
+  installation: "התקנה",
+  city: "עיר",
+  contact_phone: "טלפון נוסף",
+  notes: "הערות",
+};
+
+const appLink = (orderId: number) => `${env("APP_URL") || "https://orders-app-5rl.pages.dev"}/order/${orderId}`;
+
+type FormOrder = {
+  client_name: string;
+  client_phone: string;
+  address: string;
+  design_due: string | null;
+  ai_details: Record<string, unknown> | null;
+};
+
+/** טופס ההזמנה כהודעת וואטסאפ: תמיד אותם שדות באותו סדר. שדה שלא ידוע מסומן "—". */
+function orderForm(orderId: number, order: FormOrder, out: Extracted | null): string {
+  const d = order.ai_details ?? {};
+  const v = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim() : "—");
+  const lines = [
+    `📋 טופס הזמנה #${orderId}`,
+    `לקוח: ${v(order.client_name)}`,
+    `טלפון: ${v(order.client_phone)}`,
+    `כתובת: ${v(order.address)}`,
+    ...Object.entries(DETAIL_LABEL).map(([k, label]) => `${label}: ${v(d[k])}`),
+    `תאריך יעד: ${v(order.design_due)}`,
+  ];
+  if (out?.summary) lines.push("", out.summary);
+  const missing = Array.isArray(d.missing) ? (d.missing as string[]) : [];
+  lines.push("", !out ? "ההודעות נשמרו בהזמנה." : missing.length ? `⚠️ חסר: ${missing.join(", ")}` : "✓ יש את כל הפרטים");
+  lines.push(appLink(orderId));
+  return lines.join("\n");
+}
+
 /** במצב העברה: המנהל מקבל סיכום של ההזמנה ומה חסר, כדי שיחליט מה לשאול את הלקוח */
 async function answerManager(orderId: number, phoneNumberId: string, to: string, out: Extracted | null) {
   if (!env("WHATSAPP_TOKEN") || env("WHATSAPP_AUTO_REPLY") === "off") return;
-  const { data: order } = await db.from("orders").select("title,client_name,status,wa_replies").eq("id", orderId).single();
+  const { data: order } = await db
+    .from("orders")
+    .select("title,client_name,client_phone,address,design_due,ai_details,status,wa_replies")
+    .eq("id", orderId)
+    .single();
   if (!order) return;
-  const link = `${env("APP_URL") || "https://orders-app-5rl.pages.dev"}/order/${orderId}`;
-  const lines = [`הזמנה #${orderId} · ${order.title}${order.client_name ? ` · ${order.client_name}` : ""}`];
-  if (out?.summary) lines.push(out.summary);
-  if (out) lines.push(out.missing.length ? `חסר: ${out.missing.join(", ")}` : "יש את כל הפרטים ✓");
-  else lines.push("ההודעות נשמרו בהזמנה.");
-  lines.push(link);
-  const body = lines.join("\n");
+  const body = orderForm(orderId, order, out);
   const sent = (order.wa_replies ?? {}) as Replies & { manager?: string };
   if (sent.manager === body) return; // אותו סיכום כבר נשלח
   await sendText(phoneNumberId, to, body);
@@ -560,16 +613,18 @@ async function sendFromApp(req: Request): Promise<Response> {
   if (!who) return reply(401, { error: "צריך להתחבר מחדש לאפליקציה" });
   if (who.role !== "designer" && who.role !== "manager") return reply(403, { error: "אין הרשאה לשלוח" });
 
-  let input: { order_id?: unknown; text?: unknown; asked?: unknown };
+  let input: { order_id?: unknown; kind?: unknown; text?: unknown; asked?: unknown };
   try {
     input = await req.json();
   } catch {
     return reply(400, { error: "בקשה לא תקינה" });
   }
   const orderId = Number(input.order_id);
+  const kind = input.kind === "design" ? "design" : "ask";
   const text = typeof input.text === "string" ? input.text.trim() : "";
   const asked = Array.isArray(input.asked) ? input.asked.filter((a): a is string => typeof a === "string").slice(0, 10) : [];
-  if (!Number.isInteger(orderId) || !text) return reply(400, { error: "חסר טקסט להודעה" });
+  if (!Number.isInteger(orderId)) return reply(400, { error: "בקשה לא תקינה" });
+  if (kind === "ask" && !text) return reply(400, { error: "חסר טקסט להודעה" });
   if (text.length > 4000) return reply(400, { error: "ההודעה ארוכה מדי" });
 
   const { data: order } = await db
@@ -585,9 +640,26 @@ async function sendFromApp(req: Request): Promise<Response> {
   if (!env("WHATSAPP_TOKEN") || !numberId) return reply(500, { error: "שליחה בוואטסאפ עוד לא הוגדרה בשרת" });
 
   const head = [`הזמנה #${orderId}`, order.title, order.client_name].filter(Boolean).join(" · ");
-  const body = `${head}\nהגרפיקאי מבקש מהלקוח:\n${text}\n\nכשהלקוח עונה, כתוב #${orderId} והעבר את התשובה`;
   try {
-    await sendText(numberId, to, body);
+    if (kind === "design") {
+      // העיצוב האחרון שהועלה להזמנה
+      const { data: draft } = await db
+        .from("messages")
+        .select("file_path,file_name,mime")
+        .eq("order_id", orderId)
+        .eq("kind", "draft")
+        .not("file_path", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!draft) return reply(400, { error: "אין עיצוב בהזמנה" });
+      const { data: signed, error } = await db.storage.from("files").createSignedUrl(draft.file_path, 7 * 86400);
+      if (error || !signed) throw error ?? new Error("signed url failed");
+      const caption = `✅ העיצוב מוכן\n${head}\nלאישור: ${appLink(orderId)}`;
+      await sendFile(numberId, to, signed.signedUrl, draft.mime ?? "", caption, draft.file_name ?? "design");
+    } else {
+      await sendText(numberId, to, `${head}\nהגרפיקאי מבקש מהלקוח:\n${text}\n\nכשהלקוח עונה, כתוב #${orderId} והעבר את התשובה`);
+    }
   } catch (e) {
     console.error("send to manager failed", orderId, e);
     // 131047: עברו יותר מ-24 שעות מההודעה האחרונה של המנהל למספר העסקי
@@ -599,6 +671,10 @@ async function sendFromApp(req: Request): Promise<Response> {
     });
   }
 
+  if (kind === "design") {
+    await db.from("messages").insert({ order_id: orderId, kind: "system", body: "העיצוב נשלח למנהל בוואטסאפ" });
+    return reply(200, { ok: true });
+  }
   // שהבוט לא ישאל שוב על מה שכבר ביקשנו
   if (asked.length) {
     const sent = (order.wa_replies ?? {}) as Replies;

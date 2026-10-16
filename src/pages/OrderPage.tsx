@@ -4,7 +4,7 @@ import { Composer } from "../components/Composer";
 import { FileView } from "../components/FileView";
 import { isCarried, isLate } from "../components/OrderCard";
 import { Bar, Empty, ErrorLine, Sheet, StatusChip, useBusy, useToast } from "../components/ui";
-import { kickNotify, postFile, rpc, askViaManager, signedUrl, waLink } from "../lib/api";
+import { askViaManager, designToManager, kickNotify, postFile, rpc, signedUrl, waLink } from "../lib/api";
 import { useMe } from "../lib/auth";
 import { loadMembers, loadMessages, loadOrder, loadTeams } from "../lib/data";
 import { fmtDay, fmtTime, nextWorkday, todayIL } from "../lib/dates";
@@ -368,47 +368,55 @@ function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[];
     }, ok);
 
   if (me.role === "designer") {
-    const upload = (kind: "draft" | "final") => async (e: React.ChangeEvent<HTMLInputElement>) => {
+    // "עוצב": מעלים את העיצוב להזמנה, והוא נשלח למנהל בוואטסאפ
+    const designed = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (!files?.length) return;
       await run(async () => {
-        for (const f of Array.from(files)) await postFile(order.id, me.id, f, kind);
+        for (const f of Array.from(files)) await postFile(order.id, me.id, f, "draft");
         kickNotify();
         onChanged();
-      }, kind === "draft" ? "הטיוטה נשלחה למנהל" : "הקובץ הסופי נשמר בכרטיס");
+        try {
+          await designToManager(order.id);
+        } catch (err) {
+          throw new Error(`העיצוב נשמר, אבל לא נשלח בוואטסאפ: ${(err as Error).message}`);
+        }
+      }, "העיצוב נשלח למנהל");
+      e.target.value = "";
+    };
+    const final = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files?.length) return;
+      await run(async () => {
+        for (const f of Array.from(files)) await postFile(order.id, me.id, f, "final");
+        kickNotify();
+        onChanged();
+      }, "הקובץ הסופי נשמר בכרטיס");
       e.target.value = "";
     };
     if (order.status === "done") return null;
-    if (order.status === "new") {
-      return (
-        <>
-          <div className="dock">
-            <button className="cta" disabled={busy} onClick={() => act("start_design", { p_order_id: order.id }, "התחלת עיצוב")}>
-              מאשר, מתחיל עיצוב
-            </button>
-            {order.source === "whatsapp" && (
-              <button className="cta ghost" disabled={busy} onClick={() => setSheet("ask")}>
-                לשלוח למנהל מה חסר
-              </button>
-            )}
-          </div>
-          {sheet === "ask" && <AskSheet order={order} onClose={() => setSheet(null)} onDone={onChanged} />}
-        </>
-      );
-    }
     return (
-      <div className="dock">
-        <input ref={draftRef} type="file" accept="image/*,application/pdf" hidden onChange={upload("draft")} />
-        <input ref={finalRef} type="file" hidden onChange={upload("final")} />
-        {(order.status === "design" || order.status === "fix" || order.status === "review") && (
-          <button className="cta" disabled={busy} onClick={() => draftRef.current?.click()}>
-            {order.status === "review" ? "טיוטה נוספת" : order.status === "fix" ? "שלח טיוטה מתוקנת" : "שלח טיוטה"}
-          </button>
-        )}
-        <button className="cta ghost" disabled={busy} onClick={() => finalRef.current?.click()}>
-          {order.final_file_path ? "החלף קובץ סופי" : "העלה קובץ סופי"}
-        </button>
-      </div>
+      <>
+        <div className="dock">
+          <input ref={draftRef} type="file" accept="image/*,application/pdf" hidden onChange={designed} />
+          <input ref={finalRef} type="file" hidden onChange={final} />
+          {order.status === "approved" ? (
+            <button className="cta" disabled={busy} onClick={() => finalRef.current?.click()}>
+              {order.final_file_path ? "החלף קובץ סופי" : "העלה קובץ סופי"}
+            </button>
+          ) : (
+            <button className="cta" disabled={busy} onClick={() => draftRef.current?.click()}>
+              עוצב – שלח למנהל
+            </button>
+          )}
+          {order.status === "new" && order.source === "whatsapp" && (
+            <button className="cta ghost" disabled={busy} onClick={() => setSheet("ask")}>
+              חסר מידע – שלח למנהל
+            </button>
+          )}
+        </div>
+        {sheet === "ask" && <AskSheet order={order} onClose={() => setSheet(null)} onDone={onChanged} />}
+      </>
     );
   }
 
@@ -578,7 +586,7 @@ function AskSheet({ order, onClose, onDone }: { order: Order; onClose: () => voi
     }, "נשלח למנהל");
 
   return (
-    <Sheet title="לשלוח למנהל מה חסר" onClose={onClose}>
+    <Sheet title="חסר מידע – שלח למנהל" onClose={onClose}>
       <textarea className="field" rows={6} autoFocus value={text} onChange={(e) => setText(e.target.value)} />
       <div className="sub">נשלח למנהל בוואטסאפ, והוא יעביר ללקוח.</div>
       <button className="cta" onClick={send} disabled={busy || !text.trim()}>
