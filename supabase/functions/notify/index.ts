@@ -87,9 +87,11 @@ function recipients(e: Event, members: Member[]): Member[] {
     case "done":
     case "field_issue":
     case "design_started":
+      return notActor(managers);
+    // הזמנה מוואטסאפ הולכת ישר לגרפיקאי
     case "wa_new":
     case "wa_message":
-      return notActor(managers);
+      return [...managers, ...designers];
     case "approved":
     case "morning":
       return team(e.team_id);
