@@ -10,6 +10,10 @@
 //   WHATSAPP_TOKEN         טוקן קבוע של System user, לשליחת תשובה ולהורדת תמונות
 //   ANTHROPIC_API_KEY      בשביל ה-AI. בלי זה ההודעות נשמרות, רק בלי מילוי אוטומטי
 // לא חובה:
+//   WHATSAPP_MANAGERS      מצב "העברה": מספרי המנהלים (972..., מופרד בפסיקים). כשמוגדר, מקבלים הודעות רק מהם:
+//                          הלקוחות כותבים למנהל, והמנהל מעביר למספר העסקי רק את מה שהוא הזמנה.
+//                          רצף העברות = הזמנה אחת, איש קשר של לקוח ממלא שם וטלפון, והמנהל מקבל סיכום ומה חסר.
+//   APP_URL                כתובת האפליקציה לקישור בסיכום למנהל. ברירת מחדל https://orders-app-5rl.pages.dev
 //   WHATSAPP_AUTO_REPLY    נוסח האישור כשאין AI. {id} מוחלף במספר ההזמנה. "off" מבטל כל תשובה ללקוח
 //   ANTHROPIC_MODEL        ברירת מחדל claude-opus-5-5
 
@@ -19,6 +23,22 @@ import Anthropic from "npm:@anthropic-ai/sdk@0.131.0";
 const GRAPH = "https://graph.facebook.com/v23.0";
 // כמה זמן לחכות לעוד הודעות מאותו לקוח לפני שה-AI קורא הכל ביחד
 const QUIET_MS = 20_000;
+// במצב העברה: אחרי כמה דקות בלי הודעה, ההעברה הבאה פותחת הזמנה חדשה
+const FORWARD_GAP_MIN = 10;
+
+const managers = () =>
+  env("WHATSAPP_MANAGERS")
+    .split(",")
+    .map((p) => p.replace(/\D/g, ""))
+    .filter(Boolean);
+
+/** מספר בפורמט של וואטסאפ (972...) מתוך מה שכתוב באיש קשר */
+function waNumber(raw: string): string {
+  const d = raw.replace(/\D/g, "");
+  if (d.startsWith("00")) return d.slice(2);
+  if (d.startsWith("0")) return "972" + d.slice(1);
+  return d;
+}
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 
@@ -67,7 +87,7 @@ type WaMessage = {
   video?: WaMedia;
   sticker?: WaMedia;
   location?: { latitude: number; longitude: number; name?: string; address?: string };
-  contacts?: { name?: { formatted_name?: string }; phones?: { phone?: string }[] }[];
+  contacts?: { name?: { formatted_name?: string }; phones?: { phone?: string; wa_id?: string }[] }[];
   button?: { text?: string };
   interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } };
 };
@@ -295,7 +315,10 @@ async function extract(orderId: number): Promise<Extracted | null> {
   content.push({
     type: "text",
     text:
-      `היום ${today}. שם הלקוח בוואטסאפ: ${order.client_name || "לא ידוע"}. מלא את כרטיס ההזמנה מההודעות למעלה.` +
+      `היום ${today}. שם הלקוח: ${order.client_name || "לא ידוע"}. מלא את כרטיס ההזמנה מההודעות למעלה.` +
+      (order.wa_forwarded_by
+        ? "\nההודעות הועברו על ידי המנהל מהשיחה שלו עם הלקוח. ייתכן שחלקן הערות של המנהל עצמו."
+        : "") +
       (order.wa_replies?.asked?.length
         ? `\nכבר ביקשנו מהלקוח: ${order.wa_replies.asked.join("; ")}. פריט שעדיין חסר, כתוב ב-missing באותו נוסח בדיוק.`
         : ""),
@@ -385,11 +408,32 @@ async function answerCustomer(orderId: number, phoneNumberId: string, to: string
   await db.from("messages").insert({ order_id: orderId, kind: "system", body: `נשלח ללקוח בוואטסאפ: ${body}` });
 }
 
+/** במצב העברה: המנהל מקבל סיכום של ההזמנה ומה חסר, כדי שיחליט מה לשאול את הלקוח */
+async function answerManager(orderId: number, phoneNumberId: string, to: string, out: Extracted | null) {
+  if (!env("WHATSAPP_TOKEN") || env("WHATSAPP_AUTO_REPLY") === "off") return;
+  const { data: order } = await db.from("orders").select("title,client_name,status,wa_replies").eq("id", orderId).single();
+  if (!order) return;
+  const link = `${env("APP_URL") || "https://orders-app-5rl.pages.dev"}/order/${orderId}`;
+  const lines = [`הזמנה #${orderId} · ${order.title}${order.client_name ? ` · ${order.client_name}` : ""}`];
+  if (out?.summary) lines.push(out.summary);
+  if (out) lines.push(out.missing.length ? `חסר: ${out.missing.join(", ")}` : "יש את כל הפרטים ✓");
+  else lines.push("ההודעות נשמרו בהזמנה.");
+  lines.push(link);
+  const body = lines.join("\n");
+  const sent = (order.wa_replies ?? {}) as Replies & { manager?: string };
+  if (sent.manager === body) return; // אותו סיכום כבר נשלח
+  await sendText(phoneNumberId, to, body);
+  await db.from("orders").update({ wa_replies: { ...sent, manager: body } }).eq("id", orderId);
+}
+
 // ---------------------------------------------------------------------------
 // עיבוד
 // ---------------------------------------------------------------------------
 
 async function handle({ msg, name, phoneNumberId }: Incoming) {
+  const forwardMode = managers().length > 0;
+  if (forwardMode && !managers().includes(msg.from)) return; // במצב העברה מקבלים רק מהמנהל
+
   // פעם אחת לכל הודעה
   const { data: fresh } = await db
     .from("wa_inbox")
@@ -397,8 +441,25 @@ async function handle({ msg, name, phoneNumberId }: Incoming) {
     .select("wa_message_id");
   if (!fresh?.length) return;
 
-  const { data: found, error } = await db.rpc("wa_order_for", { p_phone: msg.from, p_name: name }).single();
-  if (error) throw error;
+  let found: unknown;
+  if (forwardMode) {
+    const contact = msg.type === "contacts" ? msg.contacts?.[0] : undefined;
+    const phone = contact?.phones?.[0];
+    const res = await db
+      .rpc("wa_forward_order_for", {
+        p_manager: msg.from,
+        p_contact_phone: phone ? waNumber(phone.wa_id || phone.phone || "") : "",
+        p_contact_name: contact?.name?.formatted_name ?? "",
+        p_gap_minutes: FORWARD_GAP_MIN,
+      })
+      .single();
+    if (res.error) throw res.error;
+    found = res.data;
+  } else {
+    const res = await db.rpc("wa_order_for", { p_phone: msg.from, p_name: name }).single();
+    if (res.error) throw res.error;
+    found = res.data;
+  }
   const { order_id: orderId } = found as { order_id: number; created: boolean };
   await db.from("wa_inbox").update({ order_id: orderId }).eq("wa_message_id", msg.id);
   await store(orderId, msg);
@@ -418,7 +479,9 @@ async function handle({ msg, name, phoneNumberId }: Incoming) {
     console.error("AI failed", e);
     return null;
   });
-  await answerCustomer(orderId, phoneNumberId, msg.from, out).catch((e) => console.error("reply failed", e));
+  await (forwardMode ? answerManager : answerCustomer)(orderId, phoneNumberId, msg.from, out).catch((e) =>
+    console.error("reply failed", e)
+  );
 
   const { count } = await db
     .from("events")

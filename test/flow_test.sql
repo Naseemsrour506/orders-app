@@ -102,6 +102,7 @@ select count(*) = 0 as ok from public.orders \gset
 -- וואטסאפ: רק השרת יכול לפתוח הזמנה, וכמה הודעות מאותו לקוח נכנסות לאותה הזמנה
 reset role;
 select not has_function_privilege('authenticated', 'public.wa_order_for(text, text)', 'execute')
+   and not has_function_privilege('authenticated', 'public.wa_forward_order_for(text, text, text, int)', 'execute')
    and not has_table_privilege('authenticated', 'public.wa_inbox', 'select') as ok \gset
 \if :ok \else \echo FAIL app users can reach whatsapp internals \quit \endif
 set role service_role;
@@ -112,6 +113,22 @@ select (not created) and order_id = :waoid as ok from public.wa_order_for('97250
 select client_phone = '0500000001' and source = 'whatsapp' and status = 'new' as ok from public.orders where id = :waoid \gset
 \if :ok \else \echo FAIL whatsapp order fields \quit \endif
 insert into public.messages (order_id, kind, body) values (:waoid, 'text', 'שלט 2 על 1');
+
+-- העברה מהמנהל: רצף אחד = הזמנה אחת, איש קשר ממלא את הלקוח
+select order_id as f1, created from public.wa_forward_order_for('972400000009', '', '', 10) \gset
+\if :created \else \echo FAIL first forward did not open order \quit \endif
+insert into public.wa_inbox (wa_message_id, phone, order_id) values ('f1', '972400000009', :f1);
+select (not created) and order_id = :f1 as ok from public.wa_forward_order_for('972400000009', '', '', 10) \gset
+\if :ok \else \echo FAIL forward in same burst opened another order \quit \endif
+select (not created) and order_id = :f1 as ok from public.wa_forward_order_for('972400000009', '972520000002', 'יוסי', 10) \gset
+\if :ok \else \echo FAIL contact did not attach to current forward order \quit \endif
+select client_phone = '0520000002' and client_name = 'יוסי' and wa_phone = '972520000002' as ok from public.orders where id = :f1 \gset
+\if :ok \else \echo FAIL contact fields not filled \quit \endif
+select created and order_id <> :f1 as ok, order_id as f2 from public.wa_forward_order_for('972400000009', '972530000003', 'רונית', 10) \gset
+\if :ok \else \echo FAIL second customer contact did not open a new order \quit \endif
+update public.wa_inbox set received_at = now() - interval '1 hour';
+select created as ok from public.wa_forward_order_for('972400000009', '', '', 10) \gset
+\if :ok \else \echo FAIL forward after a long gap did not open new order \quit \endif
 reset role;
 set role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
