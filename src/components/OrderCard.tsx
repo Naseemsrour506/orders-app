@@ -35,7 +35,12 @@ export function OrderCard({ o, teams, showTeam, role }: { o: Order; teams?: Team
   if (isLate(o)) tags.push({ t: "באיחור", c: "r" });
   if (o.urgent && o.status !== "done" && (FIELD_TEAMS || o.status !== "approved")) tags.push({ t: "דחוף", c: "w" });
   if (o.field_issue && o.status === "approved") tags.push({ t: "⚠ הערה מהשטח", c: "w" });
-  if (o.source === "whatsapp" && o.status === "new") tags.push({ t: "מוואטסאפ", c: "g" });
+  const fromWa = o.source === "whatsapp" && o.status === "new";
+  const missing = fromWa ? (o.ai_details?.missing?.length ?? 0) : 0;
+  if (fromWa) tags.push({ t: "מוואטסאפ", c: "g" });
+  if (missing) tags.push({ t: `חסרים ${missing} פרטים`, c: "w" });
+  const d = o.ai_details ?? {};
+  const spec = fromWa ? [d.size, d.quantity && `כמות ${d.quantity}`, d.material, d.city].filter(Boolean).join(" · ") : "";
   const wait = waiting(o, role);
   return (
     <Link to={`/order/${o.id}`} className={`card ${isCarried(o) || isLate(o) ? "carry" : ""}`}>
@@ -54,6 +59,7 @@ export function OrderCard({ o, teams, showTeam, role }: { o: Order; teams?: Team
           .filter(Boolean)
           .join(" · ")}
       </div>
+      {spec && <div className="spec">{spec}</div>}
       {(wait || tags.length > 0) && (
         <div className="tags">
           {wait && <span className={`wait ${wait.mine ? "mine" : ""}`}>{wait.t}</span>}

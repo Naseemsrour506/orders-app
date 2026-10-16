@@ -10,7 +10,12 @@
 //   WHATSAPP_TOKEN         טוקן קבוע של System user, לשליחת תשובה ולהורדת תמונות
 //   ANTHROPIC_API_KEY      בשביל ה-AI. בלי זה ההודעות נשמרות, רק בלי מילוי אוטומטי
 // לא חובה:
-//   WHATSAPP_AUTO_REPLY    נוסח התשובה האוטומטית. {id} מוחלף במספר ההזמנה. "off" מבטל
+//   WHATSAPP_MANAGERS      מצב "העברה": מספרי המנהלים (972..., מופרד בפסיקים). כשמוגדר, מקבלים הודעות רק מהם:
+//                          הלקוחות כותבים למנהל, והמנהל מעביר למספר העסקי רק את מה שהוא הזמנה.
+//                          רצף העברות = הזמנה אחת, איש קשר של לקוח ממלא שם וטלפון, והמנהל מקבל סיכום ומה חסר.
+//                          המנהל יכול לכתוב "#1003" כדי שההודעות הבאות ייכנסו להזמנה 1003, או "חדש" להזמנה חדשה.
+//   APP_URL                כתובת האפליקציה לקישור בסיכום למנהל. ברירת מחדל https://orders-app-5rl.pages.dev
+//   WHATSAPP_AUTO_REPLY    נוסח האישור כשאין AI. {id} מוחלף במספר ההזמנה. "off" מבטל כל תשובה ללקוח
 //   ANTHROPIC_MODEL        ברירת מחדל claude-opus-5-5
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -19,6 +24,22 @@ import Anthropic from "npm:@anthropic-ai/sdk@0.131.0";
 const GRAPH = "https://graph.facebook.com/v23.0";
 // כמה זמן לחכות לעוד הודעות מאותו לקוח לפני שה-AI קורא הכל ביחד
 const QUIET_MS = 20_000;
+// במצב העברה: אחרי כמה דקות בלי הודעה, ההעברה הבאה פותחת הזמנה חדשה
+const FORWARD_GAP_MIN = 10;
+
+const managers = () =>
+  env("WHATSAPP_MANAGERS")
+    .split(",")
+    .map((p) => p.replace(/\D/g, ""))
+    .filter(Boolean);
+
+/** מספר בפורמט של וואטסאפ (972...) מתוך מה שכתוב באיש קשר */
+function waNumber(raw: string): string {
+  const d = raw.replace(/\D/g, "");
+  if (d.startsWith("00")) return d.slice(2);
+  if (d.startsWith("0")) return "972" + d.slice(1);
+  return d;
+}
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 
@@ -67,7 +88,7 @@ type WaMessage = {
   video?: WaMedia;
   sticker?: WaMedia;
   location?: { latitude: number; longitude: number; name?: string; address?: string };
-  contacts?: { name?: { formatted_name?: string }; phones?: { phone?: string }[] }[];
+  contacts?: { name?: { formatted_name?: string }; phones?: { phone?: string; wa_id?: string }[] }[];
   button?: { text?: string };
   interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } };
 };
@@ -195,25 +216,59 @@ async function store(orderId: number, m: WaMessage) {
 
 const FIELDS = ["title", "client_name", "address", "design_due"] as const;
 
+// פרטים לפי שדות. נשמרים ב-orders.ai_details ומוצגים בכרטיס ההזמנה.
+const DETAILS = {
+  product: "סוג המוצר, למשל: שלט חזית, באנר, מדבקה לרכב, כרטיסי ביקור",
+  size: "מידות, כולל יחידה. למשל: 200x100 ס\"מ",
+  quantity: "כמות",
+  material: "חומר או סוג הדפסה, למשל: אלומיניום, PVC, ויניל, פלקס",
+  print_text: "הטקסט שיופיע על המוצר, מילה במילה",
+  design: "צבעים, לוגו, סגנון, או 'יש קובץ מוכן'",
+  lighting: "תאורה, אם רלוונטי לשלט: מואר / לא מואר",
+  installation: "האם צריך התקנה: כן / לא",
+  city: "עיר",
+  contact_phone: "טלפון נוסף שהלקוח נתן, אם נתן",
+  notes: "כל דבר חשוב אחר",
+} as const;
+
 const SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string", description: "מה מזמינים, בכמה מילים. למשל: שלט חזית מואר 3x1 מ'" },
-    client_name: { type: "string", description: "שם הלקוח או העסק, אם נאמר. אחרת ריק" },
-    address: { type: "string", description: "כתובת לביצוע/התקנה, אם נאמרה. אחרת ריק" },
+    client_name: { type: "string", description: "שם הלקוח או העסק, אם נאמר בהודעות. אחרת ריק" },
+    address: { type: "string", description: "רחוב ומספר לביצוע/התקנה, אם נאמרו. אחרת ריק" },
     design_due: { type: "string", description: "תאריך יעד בפורמט YYYY-MM-DD אם הלקוח ביקש עד תאריך. אחרת ריק" },
-    summary: {
-      type: "string",
-      description: "סיכום קצר בעברית לגרפיקאי ולמנהל: מידות, כמות, טקסט להדפסה, צבעים, חומר, מה חסר לשאול",
+    details: {
+      type: "object",
+      properties: Object.fromEntries(Object.entries(DETAILS).map(([k, d]) => [k, { type: "string", description: d + ". ריק אם לא נאמר" }])),
+      required: Object.keys(DETAILS),
+      additionalProperties: false,
     },
+    missing: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "מה חסר כדי להתחיל לעבוד, לכל היותר 4, רק החשובים. כל פריט בכמה מילים, מנוסח ללקוח. למשל: מידות מדויקות, הטקסט שיופיע על השלט",
+    },
+    summary: { type: "string", description: "משפט או שניים בעברית: מה הלקוח רוצה" },
   },
-  required: ["title", "client_name", "address", "design_due", "summary"],
+  required: ["title", "client_name", "address", "design_due", "details", "missing", "summary"],
   additionalProperties: false,
 };
 
-const SYSTEM = `אתה עוזר בעסק לשילוט ודפוס. לקוחות שולחים הודעות ותמונות בוואטסאפ, ואתה ממלא מהן כרטיס הזמנה.
+const SYSTEM = `אתה עוזר בעסק לשילוט ודפוס. לקוחות שולחים הודעות ותמונות בוואטסאפ, ואתה ממלא מהן כרטיס הזמנה לפי שדות.
 כתוב בעברית. אל תמציא פרטים: מה שלא נאמר נשאר ריק. אם יש סתירה, ההודעה המאוחרת קובעת.
-בסיכום ציין גם מה חסר כדי להתחיל לעבוד (למשל מידות או טקסט), בשורה שמתחילה ב"חסר:".`;
+ב-missing רשום רק מה שבאמת חסר כדי להתחיל עיצוב או הצעת מחיר. אל תבקש שוב משהו שהלקוח כבר נתן.`;
+
+type Extracted = {
+  title: string;
+  client_name: string;
+  address: string;
+  design_due: string;
+  details: Record<string, string>;
+  missing: string[];
+  summary: string;
+};
 
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
@@ -223,10 +278,10 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
-async function extract(orderId: number) {
-  if (!env("ANTHROPIC_API_KEY")) return;
+async function extract(orderId: number): Promise<Extracted | null> {
+  if (!env("ANTHROPIC_API_KEY")) return null;
   const { data: order } = await db.from("orders").select("*").eq("id", orderId).single();
-  if (!order || order.status !== "new") return; // אחרי שהמנהל התחיל לטפל, לא נוגעים בפרטים
+  if (!order || order.status !== "new") return null; // אחרי שהמנהל התחיל לטפל, לא נוגעים בפרטים
 
   const { data: msgs } = await db
     .from("messages")
@@ -236,7 +291,7 @@ async function extract(orderId: number) {
     .neq("kind", "system")
     .order("created_at")
     .order("id");
-  if (!msgs?.length) return;
+  if (!msgs?.length) return null;
 
   // עד 6 התמונות האחרונות, כדי לשמור על עלות נמוכה
   const withImage = new Set(
@@ -260,7 +315,14 @@ async function extract(orderId: number) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem" }).format(new Date());
   content.push({
     type: "text",
-    text: `היום ${today}. שם הלקוח בוואטסאפ: ${order.client_name || "לא ידוע"}. מלא את כרטיס ההזמנה מההודעות למעלה.`,
+    text:
+      `היום ${today}. שם הלקוח: ${order.client_name || "לא ידוע"}. מלא את כרטיס ההזמנה מההודעות למעלה.` +
+      (order.wa_forwarded_by
+        ? "\nההודעות הועברו על ידי המנהל מהשיחה שלו עם הלקוח. ייתכן שחלקן הערות של המנהל עצמו."
+        : "") +
+      (order.wa_replies?.asked?.length
+        ? `\nכבר ביקשנו מהלקוח: ${order.wa_replies.asked.join("; ")}. פריט שעדיין חסר, כתוב ב-missing באותו נוסח בדיוק.`
+        : ""),
   });
 
   const client = new Anthropic();
@@ -275,18 +337,27 @@ async function extract(orderId: number) {
   });
   if (res.stop_reason === "refusal") {
     console.error("AI declined", res.stop_details);
-    return;
+    return null;
   }
   const text = res.content.find((b) => b.type === "text");
-  if (text?.type !== "text") return;
-  const out = JSON.parse(text.text) as Record<string, string>;
+  if (text?.type !== "text") return null;
+  const out = JSON.parse(text.text) as Extracted;
   if (out.design_due && !/^\d{4}-\d{2}-\d{2}$/.test(out.design_due)) out.design_due = "";
+  const details: Record<string, string> = {};
+  for (const k of Object.keys(DETAILS)) {
+    const v = (out.details?.[k] ?? "").trim();
+    if (v) details[k] = v;
+  }
+  out.missing = (out.missing ?? []).map((m) => m.trim()).filter(Boolean).slice(0, 4);
 
   // ממלאים רק שדות ריקים או שה-AI מילא בעצמו. מה שהמנהל כתב נשאר.
   const fresh = (await db.from("orders").select("*").eq("id", orderId).single()).data ?? order;
-  if (fresh.status !== "new") return;
+  if (fresh.status !== "new") return null;
   const prev = (fresh.ai_fields ?? {}) as Record<string, string>;
-  const update: Record<string, unknown> = { ai_summary: out.summary ?? "" };
+  const update: Record<string, unknown> = {
+    ai_summary: out.summary ?? "",
+    ai_details: { ...details, missing: out.missing },
+  };
   const ai: Record<string, string> = { ...prev };
   for (const f of FIELDS) {
     const current = fresh[f] ?? "";
@@ -300,6 +371,60 @@ async function extract(orderId: number) {
   update.ai_fields = ai;
   const { error } = await db.from("orders").update(update).eq("id", orderId);
   if (error) throw error;
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// תשובה ללקוח: תודה, ומה עוד חסר. לא שואלים פעמיים על אותו דבר.
+// ---------------------------------------------------------------------------
+
+type Replies = { greeted?: boolean; asked?: string[]; complete?: boolean };
+
+async function answerCustomer(orderId: number, phoneNumberId: string, to: string, out: Extracted | null) {
+  if (!env("WHATSAPP_TOKEN") || env("WHATSAPP_AUTO_REPLY") === "off") return;
+  const { data: order } = await db.from("orders").select("status,wa_replies").eq("id", orderId).single();
+  if (!order || order.status !== "new") return;
+  const sent = (order.wa_replies ?? {}) as Replies;
+  const asked = new Set(sent.asked ?? []);
+  const thanks = sent.greeted ? "תודה!" : `תודה! קיבלנו את הפנייה (הזמנה #${orderId}) 🙏`;
+  let body = "";
+  const next: Replies = { ...sent, greeted: true };
+
+  if (!out) {
+    // בלי AI: רק אישור קבלה, פעם אחת
+    if (!sent.greeted) body = env("WHATSAPP_AUTO_REPLY").replaceAll("{id}", String(orderId)) || `${thanks} נחזור אליך בהקדם.`;
+  } else if (out.missing.length && out.missing.some((m) => !asked.has(m))) {
+    body = `${thanks}\nכדי שנוכל להתחיל, נשמח לעוד כמה פרטים:\n${out.missing.map((m) => `• ${m}`).join("\n")}`;
+    next.asked = [...new Set([...asked, ...out.missing])];
+  } else if (!out.missing.length && !sent.complete) {
+    body = `${thanks} יש לנו את כל הפרטים להזמנה #${orderId}, ונחזור אליך בהקדם עם הדמיה.`;
+    next.complete = true;
+  } else if (!sent.greeted) {
+    body = `${thanks} נחזור אליך בהקדם.`;
+  }
+  if (!body) return;
+  await sendText(phoneNumberId, to, body);
+  await db.from("orders").update({ wa_replies: next }).eq("id", orderId);
+  // שהמנהל יראה בכרטיס מה נשלח ללקוח
+  await db.from("messages").insert({ order_id: orderId, kind: "system", body: `נשלח ללקוח בוואטסאפ: ${body}` });
+}
+
+/** במצב העברה: המנהל מקבל סיכום של ההזמנה ומה חסר, כדי שיחליט מה לשאול את הלקוח */
+async function answerManager(orderId: number, phoneNumberId: string, to: string, out: Extracted | null) {
+  if (!env("WHATSAPP_TOKEN") || env("WHATSAPP_AUTO_REPLY") === "off") return;
+  const { data: order } = await db.from("orders").select("title,client_name,status,wa_replies").eq("id", orderId).single();
+  if (!order) return;
+  const link = `${env("APP_URL") || "https://orders-app-5rl.pages.dev"}/order/${orderId}`;
+  const lines = [`הזמנה #${orderId} · ${order.title}${order.client_name ? ` · ${order.client_name}` : ""}`];
+  if (out?.summary) lines.push(out.summary);
+  if (out) lines.push(out.missing.length ? `חסר: ${out.missing.join(", ")}` : "יש את כל הפרטים ✓");
+  else lines.push("ההודעות נשמרו בהזמנה.");
+  lines.push(link);
+  const body = lines.join("\n");
+  const sent = (order.wa_replies ?? {}) as Replies & { manager?: string };
+  if (sent.manager === body) return; // אותו סיכום כבר נשלח
+  await sendText(phoneNumberId, to, body);
+  await db.from("orders").update({ wa_replies: { ...sent, manager: body } }).eq("id", orderId);
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +432,9 @@ async function extract(orderId: number) {
 // ---------------------------------------------------------------------------
 
 async function handle({ msg, name, phoneNumberId }: Incoming) {
+  const forwardMode = managers().length > 0;
+  if (forwardMode && !managers().includes(msg.from)) return; // במצב העברה מקבלים רק מהמנהל
+
   // פעם אחת לכל הודעה
   const { data: fresh } = await db
     .from("wa_inbox")
@@ -314,19 +442,44 @@ async function handle({ msg, name, phoneNumberId }: Incoming) {
     .select("wa_message_id");
   if (!fresh?.length) return;
 
-  const { data: found, error } = await db.rpc("wa_order_for", { p_phone: msg.from, p_name: name }).single();
-  if (error) throw error;
-  const { order_id: orderId, created } = found as { order_id: number; created: boolean };
+  let found: unknown;
+  if (forwardMode) {
+    // פקודות של המנהל: "#1003" מעביר את ההודעות הבאות להזמנה 1003, "חדש" פותח הזמנה חדשה
+    const text = msg.type === "text" ? (msg.text?.body ?? "").trim() : "";
+    const target = text.match(/^#?\s*(\d{3,9})$/)?.[1];
+    const isNew = /^(חדש|חדשה|הזמנה חדשה|\+)$/.test(text);
+    const contact = msg.type === "contacts" ? msg.contacts?.[0] : undefined;
+    const phone = contact?.phones?.[0];
+    const res = await db
+      .rpc("wa_forward_order_for", {
+        p_manager: msg.from,
+        p_message_id: msg.id,
+        p_contact_phone: phone ? waNumber(phone.wa_id || phone.phone || "") : "",
+        p_contact_name: contact?.name?.formatted_name ?? "",
+        p_gap_minutes: FORWARD_GAP_MIN,
+        p_target: target ? Number(target) : null,
+        p_new: isNew,
+      })
+      .single();
+    if (res.error) throw res.error;
+    if (target || isNew) {
+      const id = (res.data as { order_id: number | null }).order_id;
+      const { data: o } = id ? await db.from("orders").select("title,client_name").eq("id", id).single() : { data: null };
+      const reply = !id
+        ? `לא מצאתי הזמנה פתוחה #${target}. ההודעות הבאות ייכנסו להזמנה הנוכחית.`
+        : `${isNew ? "נפתחה הזמנה" : "עברתי להזמנה"} #${id}${o && !isNew ? ` · ${o.title}${o.client_name ? ` · ${o.client_name}` : ""}` : ""}. מה שתעביר עכשיו ייכנס אליה.`;
+      await sendText(phoneNumberId, msg.from, reply).catch((e) => console.error("reply failed", e));
+      return;
+    }
+    found = res.data;
+  } else {
+    const res = await db.rpc("wa_order_for", { p_phone: msg.from, p_name: name }).single();
+    if (res.error) throw res.error;
+    found = res.data;
+  }
+  const { order_id: orderId } = found as { order_id: number; created: boolean };
   await db.from("wa_inbox").update({ order_id: orderId }).eq("wa_message_id", msg.id);
   await store(orderId, msg);
-
-  if (created && env("WHATSAPP_TOKEN") && env("WHATSAPP_AUTO_REPLY") !== "off") {
-    const reply = (env("WHATSAPP_AUTO_REPLY") || "תודה! קיבלנו את הפנייה (הזמנה #{id}) ונחזור אליך בהקדם 🙏").replaceAll(
-      "{id}",
-      String(orderId),
-    );
-    await sendText(phoneNumberId, msg.from, reply).catch((e) => console.error("auto reply failed", e));
-  }
 
   // מחכים שהלקוח יסיים לשלוח. רק ההודעה האחרונה ממשיכה.
   await new Promise((r) => setTimeout(r, QUIET_MS));
@@ -339,7 +492,13 @@ async function handle({ msg, name, phoneNumberId }: Incoming) {
     .single();
   if (last?.wa_message_id !== msg.id) return;
 
-  await extract(orderId).catch((e) => console.error("AI failed", e));
+  const out = await extract(orderId).catch((e) => {
+    console.error("AI failed", e);
+    return null;
+  });
+  await (forwardMode ? answerManager : answerCustomer)(orderId, phoneNumberId, msg.from, out).catch((e) =>
+    console.error("reply failed", e)
+  );
 
   const { count } = await db
     .from("events")

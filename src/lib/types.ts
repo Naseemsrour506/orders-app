@@ -48,10 +48,42 @@ export interface Order {
   final_file_name: string | null;
   source: "app" | "whatsapp";
   wa_phone: string | null;
+  wa_forwarded_by: string | null;
   ai_summary: string;
+  ai_details: AiDetails;
   created_at: string;
   updated_at: string;
 }
+
+/** מה שה-AI חילץ מהודעות הוואטסאפ, לפי שדות */
+export interface AiDetails {
+  product?: string;
+  size?: string;
+  quantity?: string;
+  material?: string;
+  print_text?: string;
+  design?: string;
+  lighting?: string;
+  installation?: string;
+  city?: string;
+  contact_phone?: string;
+  notes?: string;
+  missing?: string[];
+}
+
+export const AI_DETAIL_LABEL: [keyof Omit<AiDetails, "missing">, string][] = [
+  ["product", "מוצר"],
+  ["size", "מידות"],
+  ["quantity", "כמות"],
+  ["material", "חומר"],
+  ["print_text", "טקסט"],
+  ["design", "עיצוב"],
+  ["lighting", "תאורה"],
+  ["installation", "התקנה"],
+  ["city", "עיר"],
+  ["contact_phone", "טלפון נוסף"],
+  ["notes", "הערות"],
+];
 
 export interface Message {
   id: number;
