@@ -4,7 +4,7 @@ import { Composer } from "../components/Composer";
 import { FileView } from "../components/FileView";
 import { isCarried, isLate } from "../components/OrderCard";
 import { Bar, Empty, ErrorLine, Sheet, StatusChip, useBusy, useToast } from "../components/ui";
-import { kickNotify, postFile, rpc, signedUrl, waLink } from "../lib/api";
+import { kickNotify, postFile, rpc, askViaManager, signedUrl, waLink } from "../lib/api";
 import { useMe } from "../lib/auth";
 import { loadMembers, loadMessages, loadOrder, loadTeams } from "../lib/data";
 import { fmtDay, fmtTime, nextWorkday, todayIL } from "../lib/dates";
@@ -348,7 +348,7 @@ function SendToClient({ m, order }: { m: Message; order: Order }) {
 }
 
 function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[]; me: Me; onChanged: () => void }) {
-  const [sheet, setSheet] = useState<null | "approve" | "fix" | "move">(null);
+  const [sheet, setSheet] = useState<null | "approve" | "fix" | "move" | "ask">(null);
   const { busy, run } = useBusy();
   const draftRef = useRef<HTMLInputElement>(null);
   const finalRef = useRef<HTMLInputElement>(null);
@@ -379,6 +379,23 @@ function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[];
       e.target.value = "";
     };
     if (order.status === "done") return null;
+    if (order.status === "new") {
+      return (
+        <>
+          <div className="dock">
+            <button className="cta" disabled={busy} onClick={() => act("start_design", { p_order_id: order.id }, "התחלת עיצוב")}>
+              מאשר, מתחיל עיצוב
+            </button>
+            {order.source === "whatsapp" && (
+              <button className="cta ghost" disabled={busy} onClick={() => setSheet("ask")}>
+                לשלוח למנהל מה חסר
+              </button>
+            )}
+          </div>
+          {sheet === "ask" && <AskSheet order={order} onClose={() => setSheet(null)} onDone={onChanged} />}
+        </>
+      );
+    }
     return (
       <div className="dock">
         <input ref={draftRef} type="file" accept="image/*,application/pdf" hidden onChange={upload("draft")} />
@@ -537,6 +554,35 @@ function ApproveSheet({
       )}
       <button className="cta" onClick={save} disabled={busy}>
         {move ? "שמירה" : "אשר לביצוע"}
+      </button>
+    </Sheet>
+  );
+}
+
+/** הגרפיקאי כותב מה חסר. נשלח למנהל בוואטסאפ, והמנהל מעביר ללקוח. */
+function AskSheet({ order, onClose, onDone }: { order: Order; onClose: () => void; onDone: () => void }) {
+  const missing = order.ai_details?.missing ?? [];
+  const [text, setText] = useState(
+    [
+      `היי${order.client_name ? " " + order.client_name : ""}, לגבי ההזמנה #${order.id}.`,
+      "כדי שנוכל להתחיל בעיצוב, נשמח לעוד כמה פרטים:",
+      ...missing.map((m) => `• ${m}`),
+    ].join("\n"),
+  );
+  const { busy, run } = useBusy();
+  const send = () =>
+    run(async () => {
+      await askViaManager(order.id, text, missing);
+      onDone();
+      onClose();
+    }, "נשלח למנהל");
+
+  return (
+    <Sheet title="לשלוח למנהל מה חסר" onClose={onClose}>
+      <textarea className="field" rows={6} autoFocus value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="sub">נשלח למנהל בוואטסאפ, והוא יעביר ללקוח.</div>
+      <button className="cta" onClick={send} disabled={busy || !text.trim()}>
+        שלח למנהל
       </button>
     </Sheet>
   );

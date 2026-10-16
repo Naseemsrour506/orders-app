@@ -8,33 +8,16 @@ import { useLive } from "../lib/hooks";
 export function DesignerHome() {
   const me = useMe();
   const { data, error } = useLive(() => loadOrders(14), ["orders"]);
-  const orders = data ?? [];
-  const mine = orders.filter((o) => o.status === "design" || o.status === "fix").sort(byPriority);
-  const waiting = orders.filter((o) => o.status === "review");
-  const approved = orders.filter((o) => o.status === "approved" || o.status === "done");
+  // כל ההזמנות, כולל חדשות מוואטסאפ, ברשימה אחת
+  const orders = [...(data ?? [])].sort(byPriority);
 
   return (
     <div className="screen">
-      <Bar title="העבודות שלי" sub={me.name} avatar="ג" right={<PushButton />} />
+      <Bar title="הזמנות" sub={me.name} avatar="ג" right={<PushButton />} />
       <div className="scroll">
         <ErrorLine error={error} />
         {!data && !error && <Empty>טוען…</Empty>}
-        {data && (
-          <>
-            <div className="sec">
-              הכדור אצלך <span className="count">{mine.length}</span>
-            </div>
-            {mine.length ? mine.map((o) => <OrderCard key={o.id} o={o} role="designer" />) : <Empty>אין עבודות שמחכות לך 🎉</Empty>}
-            {waiting.length > 0 && <div className="sec">ממתין לאישור המנהל</div>}
-            {waiting.map((o) => (
-              <OrderCard key={o.id} o={o} role="designer" />
-            ))}
-            {approved.length > 0 && <div className="sec">אושרו לאחרונה</div>}
-            {approved.map((o) => (
-              <OrderCard key={o.id} o={o} />
-            ))}
-          </>
-        )}
+        {data && (orders.length ? orders.map((o) => <OrderCard key={o.id} o={o} role="designer" />) : <Empty>אין הזמנות</Empty>)}
       </div>
     </div>
   );

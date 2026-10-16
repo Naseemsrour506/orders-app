@@ -16,11 +16,17 @@ select public.create_member('צוות 2', 'field', 2::smallint)->>'token' as f2t
 select public.create_order('שלט חזית', 'קפה הנמל', '0500000000', 'הדייגים 3, עכו', null) as oid \gset
 insert into public.messages (order_id, author_id, kind, body) values (:oid, public.current_member_id(), 'text', 'לבן עם לוגו ירוק');
 
--- גרפיקאי לא רואה לפני שנשלח
+-- גרפיקאי רואה גם הזמנה חדשה שעוד לא נשלחה אליו, עם ההודעות שלה
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000d', false);
 select public.claim_invite(:'dtoken');
-select count(*) = 0 as ok from public.orders \gset
-\if :ok \else \echo FAIL designer sees unsent order \quit \endif
+select count(*) = 1 as ok from public.orders where status = 'new' \gset
+\if :ok \else \echo FAIL designer cannot see new order \quit \endif
+select count(*) = 1 as ok from public.messages where order_id = :oid \gset
+\if :ok \else \echo FAIL designer cannot see messages of new order \quit \endif
+-- אבל לא יכול לעדכן ישירות
+update public.orders set status = 'done' where id = :oid;
+select status = 'new' as ok from public.orders where id = :oid \gset
+\if :ok \else \echo FAIL designer updated order directly \quit \endif
 
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
 select public.send_to_designer(:oid);
@@ -148,6 +154,26 @@ set role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
 select count(*) = 1 as ok from public.messages where order_id = :waoid and author_id is null and kind = 'text' \gset
 \if :ok \else \echo FAIL manager cannot see customer message \quit \endif
+
+-- הגרפיקאי רואה את ההזמנה מוואטסאפ ואת מה שהלקוח שלח, ומאשר להתחיל עיצוב
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000d', false);
+select count(*) = 1 as ok from public.messages where order_id = :waoid and author_id is null and kind = 'text' \gset
+\if :ok \else \echo FAIL designer cannot see customer message \quit \endif
+select public.start_design(:waoid);
+select status = 'design' and sent_to_designer_at is not null as ok from public.orders where id = :waoid \gset
+\if :ok \else \echo FAIL designer start_design \quit \endif
+select count(*) = 1 as ok from public.messages where order_id = :waoid and kind = 'system' and body = 'הגרפיקאי אישר והתחיל עיצוב' \gset
+\if :ok \else \echo FAIL start_design system message \quit \endif
+-- פעם שנייה נכשלת, וצוות שטח לא יכול בכלל
+\set ON_ERROR_STOP 0
+select public.start_design(:waoid);
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000f2', false);
+select public.start_design(:f2);
+\set ON_ERROR_STOP 1
+reset role;
+select status = 'new' as ok from public.orders where id = :f2 \gset
+\if :ok \else \echo FAIL field user started design \quit \endif
+set role authenticated;
 
 reset role;
 select count(*) as events from public.events;
