@@ -75,6 +75,14 @@ export async function postText(orderId: number, authorId: string, body: string) 
   if (error) throw new Error(error.message);
 }
 
+/** שולח למנהל בוואטסאפ מה לבקש מהלקוח, והמנהל מעביר ללקוח. עובר דרך השרת, שם נמצא הטוקן. */
+export async function askViaManager(orderId: number, text: string, asked: string[] = []) {
+  const { error } = await supabase.functions.invoke("whatsapp/send", { body: { order_id: orderId, text, asked } });
+  if (!error) return;
+  const body = await (error as { context?: Response }).context?.json?.().catch(() => null);
+  throw new Error(body?.error || "השליחה נכשלה. נסו שוב");
+}
+
 /** מבקש מפונקציית ההתראות לשלוח את מה שממתין. לא חוסם ולא נכשל. */
 export function kickNotify() {
   supabase.functions.invoke("notify", { body: {} }).catch(() => undefined);

@@ -3,6 +3,8 @@
 // GET  - אימות הכתובת מול Meta (hub.challenge)
 // POST - הודעה חדשה: נשמרת בכרטיס ההזמנה של אותו לקוח (או בהזמנה חדשה),
 //        ואחרי שהלקוח מסיים לשלוח, ה-AI ממלא את פרטי ההזמנה והמנהל מקבל התראה.
+// POST /send - מהאפליקציה: גרפיקאי או מנהל שולחים למנהל בוואטסאפ מה לבקש מהלקוח, והמנהל מעביר ללקוח.
+//        {"order_id": 1003, "text": "...", "asked": ["מידות"]}. דורש משתמש מחובר.
 //
 // סודות (Supabase ← Edge Functions ← Secrets, או דרך GitHub Secrets):
 //   WHATSAPP_VERIFY_TOKEN  מילה סודית שבוחרים ומדביקים גם ב-Meta
@@ -14,6 +16,8 @@
 //                          הלקוחות כותבים למנהל, והמנהל מעביר למספר העסקי רק את מה שהוא הזמנה.
 //                          רצף העברות = הזמנה אחת, איש קשר של לקוח ממלא שם וטלפון, והמנהל מקבל סיכום ומה חסר.
 //                          המנהל יכול לכתוב "#1003" כדי שההודעות הבאות ייכנסו להזמנה 1003, או "חדש" להזמנה חדשה.
+//   WHATSAPP_PHONE_NUMBER_ID  מזהה המספר העסקי ב-Meta, לשליחה מהאפליקציה. בלי זה משתמשים במספר
+//                          שקיבל את ההודעה האחרונה מוואטסאפ
 //   APP_URL                כתובת האפליקציה לקישור בסיכום למנהל. ברירת מחדל https://orders-app-5rl.pages.dev
 //   WHATSAPP_AUTO_REPLY    נוסח האישור כשאין AI. {id} מוחלף במספר ההזמנה. "off" מבטל כל תשובה ללקוח
 //   ANTHROPIC_MODEL        ברירת מחדל claude-opus-5-5
@@ -132,6 +136,19 @@ async function sendText(phoneNumberId: string, to: string, body: string) {
     method: "POST",
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body } }),
   });
+}
+
+// המספר העסקי שממנו שולחים מהאפליקציה. נשמר מההודעות הנכנסות, כדי שלא יהיה חובה להגדיר אותו.
+let knownNumberId = "";
+async function rememberNumberId(id: string) {
+  if (!id || id === knownNumberId) return;
+  knownNumberId = id;
+  await db.from("app_secrets").upsert({ key: "wa_phone_number_id", value: id }, { onConflict: "key" });
+}
+async function businessNumberId(): Promise<string> {
+  if (env("WHATSAPP_PHONE_NUMBER_ID")) return env("WHATSAPP_PHONE_NUMBER_ID");
+  const { data } = await db.from("app_secrets").select("value").eq("key", "wa_phone_number_id").maybeSingle();
+  return data?.value ?? "";
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +449,7 @@ async function answerManager(orderId: number, phoneNumberId: string, to: string,
 // ---------------------------------------------------------------------------
 
 async function handle({ msg, name, phoneNumberId }: Incoming) {
+  await rememberNumberId(phoneNumberId).catch((e) => console.error("remember number failed", e));
   const forwardMode = managers().length > 0;
   if (forwardMode && !managers().includes(msg.from)) return; // במצב העברה מקבלים רק מהמנהל
 
@@ -513,8 +531,97 @@ async function handle({ msg, name, phoneNumberId }: Incoming) {
   await db.functions.invoke("notify", { body: {} }).catch(() => undefined);
 }
 
+// ---------------------------------------------------------------------------
+// בקשת פרטים מהלקוח, דרך המנהל: נשלחת למנהל בוואטסאפ, והוא מעביר ללקוח. הטוקן של וואטסאפ נשאר כאן בשרת.
+// ---------------------------------------------------------------------------
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const reply = (status: number, body: Record<string, unknown>) =>
+  new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+
+/** מי שולח: משתמש מחובר שמחובר לחבר צוות פעיל */
+async function caller(req: Request): Promise<{ id: string; role: string } | null> {
+  const jwt = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!jwt) return null;
+  const { data, error } = await db.auth.getUser(jwt);
+  if (error || !data.user) return null;
+  const { data: device } = await db.from("member_devices").select("member_id").eq("auth_uid", data.user.id).maybeSingle();
+  if (!device) return null;
+  const { data: member } = await db.from("members").select("id,role,active").eq("id", device.member_id).maybeSingle();
+  return member?.active ? { id: member.id, role: member.role } : null;
+}
+
+async function sendFromApp(req: Request): Promise<Response> {
+  const who = await caller(req);
+  if (!who) return reply(401, { error: "צריך להתחבר מחדש לאפליקציה" });
+  if (who.role !== "designer" && who.role !== "manager") return reply(403, { error: "אין הרשאה לשלוח" });
+
+  let input: { order_id?: unknown; text?: unknown; asked?: unknown };
+  try {
+    input = await req.json();
+  } catch {
+    return reply(400, { error: "בקשה לא תקינה" });
+  }
+  const orderId = Number(input.order_id);
+  const text = typeof input.text === "string" ? input.text.trim() : "";
+  const asked = Array.isArray(input.asked) ? input.asked.filter((a): a is string => typeof a === "string").slice(0, 10) : [];
+  if (!Number.isInteger(orderId) || !text) return reply(400, { error: "חסר טקסט להודעה" });
+  if (text.length > 4000) return reply(400, { error: "ההודעה ארוכה מדי" });
+
+  const { data: order } = await db
+    .from("orders")
+    .select("id,title,client_name,wa_forwarded_by,wa_replies")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (!order) return reply(404, { error: "הזמנה לא נמצאה" });
+  // המנהל שהעביר את ההזמנה, או המנהל הראשון ב-WHATSAPP_MANAGERS
+  const to = order.wa_forwarded_by || managers()[0];
+  if (!to) return reply(500, { error: "לא הוגדר מספר וואטסאפ של המנהל (WHATSAPP_MANAGERS)" });
+  const numberId = await businessNumberId();
+  if (!env("WHATSAPP_TOKEN") || !numberId) return reply(500, { error: "שליחה בוואטסאפ עוד לא הוגדרה בשרת" });
+
+  const head = [`הזמנה #${orderId}`, order.title, order.client_name].filter(Boolean).join(" · ");
+  const body = `${head}\nהגרפיקאי מבקש מהלקוח:\n${text}\n\nכשהלקוח עונה, כתוב #${orderId} והעבר את התשובה`;
+  try {
+    await sendText(numberId, to, body);
+  } catch (e) {
+    console.error("send to manager failed", orderId, e);
+    // 131047: עברו יותר מ-24 שעות מההודעה האחרונה של המנהל למספר העסקי
+    const outside = /131047/.test(String(e));
+    return reply(502, {
+      error: outside
+        ? "וואטסאפ לא מאפשר לשלוח: המנהל לא כתב למספר העסקי ב-24 השעות האחרונות"
+        : "השליחה בוואטסאפ נכשלה. נסו שוב",
+    });
+  }
+
+  // שהבוט לא ישאל שוב על מה שכבר ביקשנו
+  if (asked.length) {
+    const sent = (order.wa_replies ?? {}) as Replies;
+    await db
+      .from("orders")
+      .update({ wa_replies: { ...sent, asked: [...new Set([...(sent.asked ?? []), ...asked])] } })
+      .eq("id", orderId);
+  }
+  await db.from("messages").insert({ order_id: orderId, kind: "system", body: `נשלח למנהל להעברה ללקוח: ${text}` });
+  return reply(200, { ok: true });
+}
+
 Deno.serve(async (req) => {
   const url = new URL(req.url);
+
+  if (url.pathname.endsWith("/send")) {
+    if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+    if (req.method !== "POST") return reply(405, { error: "method not allowed" });
+    return sendFromApp(req).catch((e) => {
+      console.error("send failed", e);
+      return reply(500, { error: "שגיאה בשרת" });
+    });
+  }
 
   if (req.method === "GET") {
     const token = env("WHATSAPP_VERIFY_TOKEN");

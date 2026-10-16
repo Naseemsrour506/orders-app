@@ -9,7 +9,6 @@ import { ManagerHome } from "./pages/ManagerHome";
 import { NewOrder } from "./pages/NewOrder";
 import { OrderPage } from "./pages/OrderPage";
 import { SharePage } from "./pages/SharePage";
-import { Teams } from "./pages/Teams";
 import { Users } from "./pages/Users";
 import { Welcome } from "./pages/Welcome";
 
@@ -40,7 +39,6 @@ export function App() {
       <Route path="/order/:id" element={me.role === "field" ? <Navigate to="/" replace /> : <OrderPage />} />
       <Route path="/share" element={<SharePage />} />
       {manager && <Route path="/new" element={<NewOrder />} />}
-      {manager && <Route path="/teams" element={<Teams />} />}
       {manager && <Route path="/users" element={<Users />} />}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

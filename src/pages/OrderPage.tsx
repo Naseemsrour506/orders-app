@@ -4,7 +4,7 @@ import { Composer } from "../components/Composer";
 import { FileView } from "../components/FileView";
 import { isCarried, isLate } from "../components/OrderCard";
 import { Bar, Empty, ErrorLine, Sheet, StatusChip, useBusy, useToast } from "../components/ui";
-import { kickNotify, postFile, rpc, signedUrl, waLink } from "../lib/api";
+import { kickNotify, postFile, rpc, askViaManager, signedUrl, waLink } from "../lib/api";
 import { useMe } from "../lib/auth";
 import { loadMembers, loadMessages, loadOrder, loadTeams } from "../lib/data";
 import { fmtDay, fmtTime, nextWorkday, todayIL } from "../lib/dates";
@@ -12,6 +12,7 @@ import { useLive } from "../lib/hooks";
 import { supabase } from "../lib/supabase";
 import type { Me, Member, Message, Order, Team } from "../lib/types";
 import { AI_DETAIL_LABEL, ROLE_LABEL } from "../lib/types";
+import { FIELD_TEAMS } from "../lib/features";
 
 export function OrderPage() {
   const id = Number(useParams().id);
@@ -116,13 +117,13 @@ function Details({
         עיצוב עד {fmtDay(order.design_due)}
       </span>
     ),
-    order.status === "approved" && order.scheduled_date && (
+    FIELD_TEAMS && order.status === "approved" && order.scheduled_date && (
       <span key="s" className={isCarried(order) ? "late" : ""}>
         {team?.name} · {fmtDay(order.scheduled_date)}
         {isCarried(order) ? " (מאתמול)" : ""}
       </span>
     ),
-    order.urgent && order.status !== "done" && (
+    order.urgent && order.status !== "done" && (FIELD_TEAMS || order.status !== "approved") && (
       <span key="u" className="chip w">
         דחוף
       </span>
@@ -270,10 +271,12 @@ function EditSheet({ order, onClose, onSaved }: { order: Order; onClose: () => v
         עיצוב עד
         <input className="field" type="date" value={f.design_due} onChange={set("design_due")} />
       </label>
-      <label>
-        הערות לצוות השטח
-        <textarea className="field" rows={2} value={f.field_notes} onChange={set("field_notes")} />
-      </label>
+      {FIELD_TEAMS && (
+        <label>
+          הערות לצוות השטח
+          <textarea className="field" rows={2} value={f.field_notes} onChange={set("field_notes")} />
+        </label>
+      )}
       <button className="cta" onClick={save} disabled={busy}>
         שמירה
       </button>
@@ -293,7 +296,7 @@ function Bubble({ m, me, members, order }: { m: Message; me: Me; members: Member
   if (m.kind === "system") {
     return (
       <div className="sys">
-        {m.body} · {fmtTime(m.created_at)}
+        {!FIELD_TEAMS && m.body.startsWith("אושר לביצוע") ? "אושר" : m.body} · {fmtTime(m.created_at)}
       </div>
     );
   }
@@ -345,7 +348,7 @@ function SendToClient({ m, order }: { m: Message; order: Order }) {
 }
 
 function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[]; me: Me; onChanged: () => void }) {
-  const [sheet, setSheet] = useState<null | "approve" | "fix" | "move">(null);
+  const [sheet, setSheet] = useState<null | "approve" | "fix" | "move" | "ask">(null);
   const { busy, run } = useBusy();
   const draftRef = useRef<HTMLInputElement>(null);
   const finalRef = useRef<HTMLInputElement>(null);
@@ -376,6 +379,23 @@ function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[];
       e.target.value = "";
     };
     if (order.status === "done") return null;
+    if (order.status === "new") {
+      return (
+        <>
+          <div className="dock">
+            <button className="cta" disabled={busy} onClick={() => act("start_design", { p_order_id: order.id }, "התחלת עיצוב")}>
+              מאשר, מתחיל עיצוב
+            </button>
+            {order.source === "whatsapp" && (
+              <button className="cta ghost" disabled={busy} onClick={() => setSheet("ask")}>
+                לשלוח למנהל מה חסר
+              </button>
+            )}
+          </div>
+          {sheet === "ask" && <AskSheet order={order} onClose={() => setSheet(null)} onDone={onChanged} />}
+        </>
+      );
+    }
     return (
       <div className="dock">
         <input ref={draftRef} type="file" accept="image/*,application/pdf" hidden onChange={upload("draft")} />
@@ -403,14 +423,14 @@ function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[];
               שלח לגרפיקאי
             </button>
             <button className="cta ghost" disabled={busy} onClick={() => setSheet("approve")}>
-              ישר לביצוע
+              {FIELD_TEAMS ? "ישר לביצוע" : "אשר בלי עיצוב"}
             </button>
           </>
         )}
         {order.status === "review" && (
           <>
             <button className="cta" disabled={busy} onClick={() => setSheet("approve")}>
-              אשר לביצוע
+              {FIELD_TEAMS ? "אשר לביצוע" : "אשר טיוטה"}
             </button>
             <button className="cta warn" disabled={busy} onClick={() => setSheet("fix")}>
               החזר לתיקון
@@ -419,10 +439,10 @@ function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[];
         )}
         {(order.status === "design" || order.status === "fix") && (
           <button className="cta ghost" disabled={busy} onClick={() => setSheet("approve")}>
-            אשר לביצוע בלי טיוטה
+            {FIELD_TEAMS ? "אשר לביצוע בלי טיוטה" : "אשר בלי טיוטה"}
           </button>
         )}
-        {order.status === "approved" && (
+        {FIELD_TEAMS && order.status === "approved" && (
           <>
             <button className="cta ghost" disabled={busy} onClick={() => setSheet("move")}>
               תאריך / צוות
@@ -439,7 +459,7 @@ function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[];
             </button>
           </>
         )}
-        {order.status === "done" && (
+        {FIELD_TEAMS && order.status === "done" && (
           <button className="cta ghost" disabled={busy} onClick={() => act("reopen_order", { p_order_id: order.id }, "נפתח מחדש")}>
             פתח מחדש
           </button>
@@ -488,7 +508,19 @@ function ApproveSheet({
       kickNotify();
       onDone();
       onClose();
-    }, move ? "עודכן" : "אושר ונכנס לרשימת השטח");
+    }, move ? "עודכן" : FIELD_TEAMS ? "אושר ונכנס לרשימת השטח" : "אושר");
+
+  // V1 בלי צוותי שטח: אישור בלחיצה, בלי צוות ותאריך
+  if (!FIELD_TEAMS && !move) {
+    return (
+      <Sheet title="לאשר את ההזמנה?" onClose={onClose}>
+        {!order.final_file_path && <div className="warn-line">אין עדיין קובץ סופי בכרטיס. אפשר לאשר, והגרפיקאי יעלה אותו אחר כך.</div>}
+        <button className="cta" onClick={save} disabled={busy}>
+          אשר
+        </button>
+      </Sheet>
+    );
+  }
 
   return (
     <Sheet title={move ? "העברה לתאריך או צוות אחר" : "אישור לביצוע"} onClose={onClose}>
@@ -522,6 +554,35 @@ function ApproveSheet({
       )}
       <button className="cta" onClick={save} disabled={busy}>
         {move ? "שמירה" : "אשר לביצוע"}
+      </button>
+    </Sheet>
+  );
+}
+
+/** הגרפיקאי כותב מה חסר. נשלח למנהל בוואטסאפ, והמנהל מעביר ללקוח. */
+function AskSheet({ order, onClose, onDone }: { order: Order; onClose: () => void; onDone: () => void }) {
+  const missing = order.ai_details?.missing ?? [];
+  const [text, setText] = useState(
+    [
+      `היי${order.client_name ? " " + order.client_name : ""}, לגבי ההזמנה #${order.id}.`,
+      "כדי שנוכל להתחיל בעיצוב, נשמח לעוד כמה פרטים:",
+      ...missing.map((m) => `• ${m}`),
+    ].join("\n"),
+  );
+  const { busy, run } = useBusy();
+  const send = () =>
+    run(async () => {
+      await askViaManager(order.id, text, missing);
+      onDone();
+      onClose();
+    }, "נשלח למנהל");
+
+  return (
+    <Sheet title="לשלוח למנהל מה חסר" onClose={onClose}>
+      <textarea className="field" rows={6} autoFocus value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="sub">נשלח למנהל בוואטסאפ, והוא יעביר ללקוח.</div>
+      <button className="cta" onClick={send} disabled={busy || !text.trim()}>
+        שלח למנהל
       </button>
     </Sheet>
   );
