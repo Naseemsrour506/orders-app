@@ -179,8 +179,19 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 14px; font-w
 .details .late { color: var(--red); font-weight: 500; }
 .warn-line { background: var(--warn-soft); color: var(--warn); padding: 8px 12px; border-radius: 10px; font-size: 14px; }
 .warn-line.pad { border-radius: 0; }
-.ai-summary { background: var(--surface2); border-bottom: 1px solid var(--line); padding: 8px 12px; font-size: 14px; white-space: pre-line; max-height: 30vh; overflow-y: auto; }
-.ai-summary b { display: block; font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 2px; }
+.form-card { background: var(--surface2); border-bottom: 1px solid var(--line); font-size: 14px; }
+.form-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; background: none; border: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-align: start; }
+.form-toggle { margin-inline-start: auto; color: var(--muted); font-size: 11px; }
+.form-body { padding: 0 12px 10px; max-height: 45vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; margin: 0; }
+.form-row { margin: 0; }
+.form-row dt { font-size: 12px; color: var(--muted); }
+.form-row dd { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.form-row dd.empty { color: var(--muted); opacity: .6; }
+.thumbs { display: flex; gap: 6px; flex-wrap: wrap; }
+.thumb { display: block; width: 64px; height: 64px; border-radius: 8px; object-fit: cover; background: var(--surface); }
+.ai-missing { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.spec { font-size: 14px; }
 
 /* השיחה בכרטיס */
 .pp { display: flex; flex-direction: column; gap: 3px; max-width: 85%; }
@@ -195,7 +206,7 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 14px; font-w
 .pp.draft .b { box-shadow: 0 0 0 2px var(--accent); }
 .pp .text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pp time { font-size: 11px; color: var(--muted); align-self: flex-end; }
-.sys { align-self: center; font-size: 12px; color: var(--muted); background: var(--surface); padding: 3px 10px; border-radius: 999px; }
+.sys { align-self: center; font-size: 12px; color: var(--muted); background: var(--surface); padding: 3px 10px; border-radius: 12px; white-space: pre-line; text-align: center; max-width: 90%; }
 .photo { display: block; border-radius: 10px; max-height: 320px; object-fit: cover; width: 100%; }
 .audio { width: 240px; max-width: 100%; }
 .file {
