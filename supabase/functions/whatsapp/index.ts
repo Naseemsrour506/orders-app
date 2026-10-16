@@ -462,19 +462,20 @@ type FormOrder = {
   ai_details: Record<string, unknown> | null;
 };
 
-/** טופס ההזמנה כהודעת וואטסאפ: תמיד אותם שדות באותו סדר. שדה שלא ידוע מסומן "—". */
+/** טופס ההזמנה כהודעת וואטסאפ: רק מה שידוע, באותו סדר תמיד, ושורה של מה שחסר. */
 function orderForm(orderId: number, order: FormOrder, out: Extracted | null): string {
   const d = order.ai_details ?? {};
-  const v = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim() : "—");
-  const lines = [
-    `📋 טופס הזמנה #${orderId}`,
-    `לקוח: ${v(order.client_name)}`,
-    `טלפון: ${v(order.client_phone)}`,
-    `כתובת: ${v(order.address)}`,
-    ...Object.entries(DETAIL_LABEL).map(([k, label]) => `${label}: ${v(d[k])}`),
-    `תאריך יעד: ${v(order.design_due)}`,
+  const v = (x: unknown) => (typeof x === "string" ? x.trim() : "");
+  const fields: [string, string][] = [
+    ["טלפון", v(order.client_phone)],
+    ["כתובת", v(order.address)],
+    ...Object.entries(DETAIL_LABEL).map(([k, label]) => [label, v(d[k])] as [string, string]),
+    ["תאריך יעד", v(order.design_due)],
   ];
-  if (out?.summary) lines.push("", out.summary);
+  const lines = [
+    `📋 הזמנה #${orderId} · ${v(order.client_name) || "לא צוין שם"}`,
+    ...fields.filter(([, x]) => x).map(([label, x]) => `${label}: ${x}`),
+  ];
   const missing = Array.isArray(d.missing) ? (d.missing as string[]) : [];
   lines.push("", !out ? "ההודעות נשמרו בהזמנה." : missing.length ? `⚠️ חסר: ${missing.join(", ")}` : "✓ יש את כל הפרטים");
   lines.push(appLink(orderId));
