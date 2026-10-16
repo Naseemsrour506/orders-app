@@ -13,6 +13,7 @@
 //   WHATSAPP_MANAGERS      מצב "העברה": מספרי המנהלים (972..., מופרד בפסיקים). כשמוגדר, מקבלים הודעות רק מהם:
 //                          הלקוחות כותבים למנהל, והמנהל מעביר למספר העסקי רק את מה שהוא הזמנה.
 //                          רצף העברות = הזמנה אחת, איש קשר של לקוח ממלא שם וטלפון, והמנהל מקבל סיכום ומה חסר.
+//                          המנהל יכול לכתוב "#1003" כדי שההודעות הבאות ייכנסו להזמנה 1003, או "חדש" להזמנה חדשה.
 //   APP_URL                כתובת האפליקציה לקישור בסיכום למנהל. ברירת מחדל https://orders-app-5rl.pages.dev
 //   WHATSAPP_AUTO_REPLY    נוסח האישור כשאין AI. {id} מוחלף במספר ההזמנה. "off" מבטל כל תשובה ללקוח
 //   ANTHROPIC_MODEL        ברירת מחדל claude-opus-5-5
@@ -443,17 +444,33 @@ async function handle({ msg, name, phoneNumberId }: Incoming) {
 
   let found: unknown;
   if (forwardMode) {
+    // פקודות של המנהל: "#1003" מעביר את ההודעות הבאות להזמנה 1003, "חדש" פותח הזמנה חדשה
+    const text = msg.type === "text" ? (msg.text?.body ?? "").trim() : "";
+    const target = text.match(/^#?\s*(\d{3,9})$/)?.[1];
+    const isNew = /^(חדש|חדשה|הזמנה חדשה|\+)$/.test(text);
     const contact = msg.type === "contacts" ? msg.contacts?.[0] : undefined;
     const phone = contact?.phones?.[0];
     const res = await db
       .rpc("wa_forward_order_for", {
         p_manager: msg.from,
+        p_message_id: msg.id,
         p_contact_phone: phone ? waNumber(phone.wa_id || phone.phone || "") : "",
         p_contact_name: contact?.name?.formatted_name ?? "",
         p_gap_minutes: FORWARD_GAP_MIN,
+        p_target: target ? Number(target) : null,
+        p_new: isNew,
       })
       .single();
     if (res.error) throw res.error;
+    if (target || isNew) {
+      const id = (res.data as { order_id: number | null }).order_id;
+      const { data: o } = id ? await db.from("orders").select("title,client_name").eq("id", id).single() : { data: null };
+      const reply = !id
+        ? `לא מצאתי הזמנה פתוחה #${target}. ההודעות הבאות ייכנסו להזמנה הנוכחית.`
+        : `${isNew ? "נפתחה הזמנה" : "עברתי להזמנה"} #${id}${o && !isNew ? ` · ${o.title}${o.client_name ? ` · ${o.client_name}` : ""}` : ""}. מה שתעביר עכשיו ייכנס אליה.`;
+      await sendText(phoneNumberId, msg.from, reply).catch((e) => console.error("reply failed", e));
+      return;
+    }
     found = res.data;
   } else {
     const res = await db.rpc("wa_order_for", { p_phone: msg.from, p_name: name }).single();
