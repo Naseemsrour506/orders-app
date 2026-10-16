@@ -76,8 +76,17 @@ export async function postText(orderId: number, authorId: string, body: string) 
 }
 
 /** שולח למנהל בוואטסאפ מה לבקש מהלקוח, והמנהל מעביר ללקוח. עובר דרך השרת, שם נמצא הטוקן. */
-export async function askViaManager(orderId: number, text: string, asked: string[] = []) {
-  const { error } = await supabase.functions.invoke("whatsapp/send", { body: { order_id: orderId, text, asked } });
+export function askViaManager(orderId: number, text: string, asked: string[] = []) {
+  return sendToManager({ order_id: orderId, kind: "ask", text, asked });
+}
+
+/** שולח למנהל בוואטסאפ את העיצוב האחרון שהועלה להזמנה */
+export function designToManager(orderId: number) {
+  return sendToManager({ order_id: orderId, kind: "design" });
+}
+
+async function sendToManager(payload: Record<string, unknown>) {
+  const { error } = await supabase.functions.invoke("whatsapp/send", { body: payload });
   if (!error) return;
   const body = await (error as { context?: Response }).context?.json?.().catch(() => null);
   throw new Error(body?.error || "השליחה נכשלה. נסו שוב");

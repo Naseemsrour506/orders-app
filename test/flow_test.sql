@@ -175,6 +175,13 @@ select status = 'new' as ok from public.orders where id = :f2 \gset
 \if :ok \else \echo FAIL field user started design \quit \endif
 set role authenticated;
 
+-- זרימה פשוטה: הגרפיקאי שולח עיצוב ישר מהזמנה חדשה, וההזמנה עוברת למנהל לאישור
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000d', false);
+insert into public.messages (order_id, author_id, kind, file_path, file_name)
+values (:f1, public.current_member_id(), 'draft', 'orders/' || :f1 || '/design.jpg', 'design.jpg');
+select status = 'review' and sent_to_designer_at is not null as ok from public.orders where id = :f1 \gset
+\if :ok \else \echo FAIL draft from new order did not move to review \quit \endif
+
 reset role;
 select count(*) as events from public.events;
 \echo ALL TESTS PASSED

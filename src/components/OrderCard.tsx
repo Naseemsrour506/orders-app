@@ -21,7 +21,7 @@ function waiting(o: Order, role?: Role): { t: string; mine: boolean } | null {
     if (o.status === "fix") return { t: "מחכה לגרפיקאי: תיקון", mine: false };
   }
   if (role === "designer") {
-    if (o.status === "new") return { t: "מחכה לך: לאשר ולהתחיל עיצוב", mine: true };
+    if (o.status === "new") return { t: "מחכה לך: עיצוב", mine: true };
     if (o.status === "design") return { t: "מחכה לך: טיוטה", mine: true };
     if (o.status === "fix") return { t: "מחכה לך: תיקון", mine: true };
     if (o.status === "review") return { t: "מחכה למנהל: אישור", mine: false };
