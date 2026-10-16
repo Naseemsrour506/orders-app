@@ -4,7 +4,7 @@ import { Composer } from "../components/Composer";
 import { FileView } from "../components/FileView";
 import { isCarried, isLate } from "../components/OrderCard";
 import { Bar, Empty, ErrorLine, Sheet, StatusChip, useBusy, useToast } from "../components/ui";
-import { askViaManager, designToManager, kickNotify, postFile, rpc, signedUrl, waLink } from "../lib/api";
+import { designToManager, kickNotify, postFile, rpc, signedUrl, waLink } from "../lib/api";
 import { useMe } from "../lib/auth";
 import { loadMembers, loadMessages, loadOrder, loadTeams } from "../lib/data";
 import { fmtDay, fmtTime, nextWorkday, todayIL } from "../lib/dates";
@@ -69,7 +69,7 @@ export function OrderPage() {
       <Bar
         back
         title={`#${order.id} ${order.title || "ללא כותרת"}`}
-        sub={order.client_name || undefined}
+        sub={order.client_name || "לא צוין שם"}
         right={<StatusChip status={order.status} />}
       />
       <Details order={order} messages={messages} teams={teams} me={me} onChanged={reload} />
@@ -133,7 +133,9 @@ function Details({
   return (
     <>
       <div className="details">
-        <div className="details-row">{parts.length ? parts : <span className="sub">אין פרטים נוספים</span>}</div>
+        <div className="details-row">
+          {parts.length ? parts : order.source !== "whatsapp" && <span className="sub">אין פרטים נוספים</span>}
+        </div>
         {me.role === "manager" && (
           <button className="link-btn" onClick={() => setEdit(true)}>
             עריכה
@@ -166,22 +168,20 @@ function Thumb({ path }: { path: string }) {
   );
 }
 
-/** טופס ההזמנה שה-AI ממלא מהודעות הוואטסאפ. שדה ריק מסומן, כדי שיהיה ברור מה חסר. */
+/** טופס ההזמנה שה-AI ממלא מההודעות: רק מה שידוע, ושורה אחת של מה שחסר. ההודעות עצמן בצ'אט למטה. */
 function OrderForm({ order, messages }: { order: Order; messages: Message[] }) {
-  const [open, setOpen] = useState(order.status === "new");
+  const [open, setOpen] = useState(true);
   const d = order.ai_details ?? {};
   const missing = d.missing ?? [];
   const photos = messages.filter((m) => !m.author_id && m.kind === "image" && m.file_path && !m.file_deleted_at);
-  const rows: [string, string | undefined][] = [
-    ["שם", order.client_name],
-    ["טלפון", [order.client_phone, d.contact_phone].filter(Boolean).join(" · ")],
-    ["כתובת", [order.address, d.city && !order.address.includes(d.city) ? d.city : ""].filter(Boolean).join(", ")],
-    ...AI_DETAIL_LABEL.filter(([k]) => k !== "city" && k !== "contact_phone" && k !== "notes").map(
-      ([k, label]) => [label, d[k]] as [string, string | undefined],
-    ),
-    ["תאריך יעד", order.design_due ? fmtDay(order.design_due) : ""],
-    ["הערות", d.notes],
-  ];
+  const rows = (
+    [
+      ["טלפון", [order.client_phone, d.contact_phone].filter(Boolean).join(" · ")],
+      ["כתובת", [order.address, d.city && !order.address.includes(d.city) ? d.city : ""].filter(Boolean).join(", ")],
+      ...AI_DETAIL_LABEL.filter(([k]) => k !== "city" && k !== "contact_phone").map(([k, label]) => [label, d[k]]),
+      ["תאריך יעד", order.design_due ? fmtDay(order.design_due) : ""],
+    ] as [string, string | undefined][]
+  ).filter(([, v]) => v);
   return (
     <div className="form-card">
       <button className="form-head" onClick={() => setOpen(!open)}>
@@ -191,36 +191,25 @@ function OrderForm({ order, messages }: { order: Order; messages: Message[] }) {
       </button>
       {open && (
         <div className="form-body">
-          {order.ai_summary && (
-            <dl className="form-row">
-              <dt>הסבר</dt>
-              <dd>{order.ai_summary}</dd>
+          {rows.length > 0 && (
+            <dl className="form-list">
+              {rows.map(([label, v]) => (
+                <div key={label}>
+                  <dt>{label}:</dt>
+                  <dd>{v}</dd>
+                </div>
+              ))}
             </dl>
           )}
-          <dl className="form-grid">
-            {rows.map(([label, v]) => (
-              <div key={label} className="form-row">
-                <dt>{label}</dt>
-                <dd className={v ? "" : "empty"}>{v || "—"}</dd>
-              </div>
-            ))}
-          </dl>
-          <dl className="form-row">
-            <dt>תמונות</dt>
-            <dd className={photos.length ? "thumbs" : "empty"}>
-              {photos.length ? photos.map((m) => <Thumb key={m.id} path={m.file_path!} />) : "—"}
-            </dd>
-          </dl>
-          {missing.length > 0 && (
-            <div className="ai-missing">
-              <span>עוד חסר:</span>
-              {missing.map((m) => (
-                <span key={m} className="chip w">
-                  {m}
-                </span>
+          {photos.length > 0 && (
+            <div className="thumbs">
+              {photos.map((m) => (
+                <Thumb key={m.id} path={m.file_path!} />
               ))}
             </div>
           )}
+          {missing.length > 0 && <div className="form-missing">חסר: {missing.join(", ")}</div>}
+          {!rows.length && !missing.length && <div className="sub">עוד אין פרטים</div>}
         </div>
       )}
     </div>
@@ -348,7 +337,7 @@ function SendToClient({ m, order }: { m: Message; order: Order }) {
 }
 
 function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[]; me: Me; onChanged: () => void }) {
-  const [sheet, setSheet] = useState<null | "approve" | "fix" | "move" | "ask">(null);
+  const [sheet, setSheet] = useState<null | "approve" | "fix" | "move">(null);
   const { busy, run } = useBusy();
   const draftRef = useRef<HTMLInputElement>(null);
   const finalRef = useRef<HTMLInputElement>(null);
@@ -409,13 +398,7 @@ function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[];
               עוצב – שלח למנהל
             </button>
           )}
-          {order.status === "new" && order.source === "whatsapp" && (
-            <button className="cta ghost" disabled={busy} onClick={() => setSheet("ask")}>
-              חסר מידע – שלח למנהל
-            </button>
-          )}
         </div>
-        {sheet === "ask" && <AskSheet order={order} onClose={() => setSheet(null)} onDone={onChanged} />}
       </>
     );
   }
@@ -558,35 +541,6 @@ function ApproveSheet({
       )}
       <button className="cta" onClick={save} disabled={busy}>
         {move ? "שמירה" : "אשר לביצוע"}
-      </button>
-    </Sheet>
-  );
-}
-
-/** הגרפיקאי כותב מה חסר. נשלח למנהל בוואטסאפ, והמנהל מעביר ללקוח. */
-function AskSheet({ order, onClose, onDone }: { order: Order; onClose: () => void; onDone: () => void }) {
-  const missing = order.ai_details?.missing ?? [];
-  const [text, setText] = useState(
-    [
-      `היי${order.client_name ? " " + order.client_name : ""}, לגבי ההזמנה #${order.id}.`,
-      "כדי שנוכל להתחיל בעיצוב, נשמח לעוד כמה פרטים:",
-      ...missing.map((m) => `• ${m}`),
-    ].join("\n"),
-  );
-  const { busy, run } = useBusy();
-  const send = () =>
-    run(async () => {
-      await askViaManager(order.id, text, missing);
-      onDone();
-      onClose();
-    }, "נשלח למנהל");
-
-  return (
-    <Sheet title="חסר מידע – שלח למנהל" onClose={onClose}>
-      <textarea className="field" rows={6} autoFocus value={text} onChange={(e) => setText(e.target.value)} />
-      <div className="sub">נשלח למנהל בוואטסאפ, והוא יעביר ללקוח.</div>
-      <button className="cta" onClick={send} disabled={busy || !text.trim()}>
-        שלח למנהל
       </button>
     </Sheet>
   );

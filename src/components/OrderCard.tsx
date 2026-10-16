@@ -52,7 +52,7 @@ export function OrderCard({ o, teams, showTeam, role }: { o: Order; teams?: Team
       <div className="sub">
         {[
           `#${o.id}`,
-          o.client_name,
+          o.client_name || "לא צוין שם",
           FIELD_TEAMS && o.status === "approved" && o.scheduled_date ? fmtDay(o.scheduled_date) : null,
           showTeam && team ? team.name : null,
           (o.status === "design" || o.status === "fix") && o.design_due ? `עד ${fmtDay(o.design_due)}` : null,

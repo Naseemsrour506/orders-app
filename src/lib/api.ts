@@ -75,11 +75,6 @@ export async function postText(orderId: number, authorId: string, body: string) 
   if (error) throw new Error(error.message);
 }
 
-/** שולח למנהל בוואטסאפ מה לבקש מהלקוח, והמנהל מעביר ללקוח. עובר דרך השרת, שם נמצא הטוקן. */
-export function askViaManager(orderId: number, text: string, asked: string[] = []) {
-  return sendToManager({ order_id: orderId, kind: "ask", text, asked });
-}
-
 /** שולח למנהל בוואטסאפ את העיצוב האחרון שהועלה להזמנה */
 export function designToManager(orderId: number) {
   return sendToManager({ order_id: orderId, kind: "design" });
