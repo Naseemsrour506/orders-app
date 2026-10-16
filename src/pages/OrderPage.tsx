@@ -281,11 +281,11 @@ function EditSheet({ order, onClose, onSaved }: { order: Order; onClose: () => v
   );
 }
 
-function authorName(m: Message, members: Member[], me: Me): string {
+function authorName(m: Message, members: Member[], me: Me, order: Order): string {
   if (m.author_id === me.id) return "אני";
   const a = members.find((x) => x.id === m.author_id);
   if (a) return a.role === "field" ? a.name : `${a.name} · ${ROLE_LABEL[a.role]}`;
-  if (!m.author_id) return "לקוח · וואטסאפ";
+  if (!m.author_id) return order.wa_forwarded_by ? "הועבר בוואטסאפ" : "לקוח · וואטסאפ";
   return "";
 }
 
@@ -302,7 +302,7 @@ function Bubble({ m, me, members, order }: { m: Message; me: Me; members: Member
   return (
     <div className={`pp ${mine ? "me" : "them"} ${m.kind}`}>
       <span className="who">
-        {authorName(m, members, me)}
+        {authorName(m, members, me, order)}
         {label && <b className="kind-tag">{label}</b>}
       </span>
       <div className="b">
