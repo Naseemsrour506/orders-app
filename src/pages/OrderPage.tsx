@@ -71,7 +71,7 @@ export function OrderPage() {
         sub={order.client_name || undefined}
         right={<StatusChip status={order.status} />}
       />
-      <Details order={order} teams={teams} me={me} onChanged={reload} />
+      <Details order={order} messages={messages} teams={teams} me={me} onChanged={reload} />
       <div className="scroll thread" ref={scrollRef}>
         {messages.length === 0 && <Empty>אין עדיין הודעות בכרטיס</Empty>}
         {messages.map((m) => (
@@ -89,7 +89,19 @@ export function OrderPage() {
   );
 }
 
-function Details({ order, teams, me, onChanged }: { order: Order; teams: Team[]; me: Me; onChanged: () => void }) {
+function Details({
+  order,
+  messages,
+  teams,
+  me,
+  onChanged,
+}: {
+  order: Order;
+  messages: Message[];
+  teams: Team[];
+  me: Me;
+  onChanged: () => void;
+}) {
   const [edit, setEdit] = useState(false);
   const team = teams.find((t) => t.id === order.team_id);
   const parts = [
@@ -127,40 +139,87 @@ function Details({ order, teams, me, onChanged }: { order: Order; teams: Team[];
           </button>
         )}
       </div>
-      {order.source === "whatsapp" && order.status !== "done" && <AiDetailsBlock order={order} />}
+      {order.source === "whatsapp" && <OrderForm order={order} messages={messages} />}
       {order.field_issue && order.status === "approved" && <div className="warn-line pad">⚠ מהשטח: {order.field_issue}</div>}
       {edit && <EditSheet order={order} onClose={() => setEdit(false)} onSaved={onChanged} />}
     </>
   );
 }
 
-function AiDetailsBlock({ order }: { order: Order }) {
-  const d = order.ai_details ?? {};
-  const rows = AI_DETAIL_LABEL.filter(([k]) => d[k]);
-  const missing = d.missing ?? [];
-  if (!rows.length && !missing.length && !order.ai_summary) return null;
+function Thumb({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    signedUrl(path)
+      .then((u) => alive && setUrl(u))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [path]);
+  if (!url) return <span className="thumb" />;
   return (
-    <div className="ai-summary">
-      <b>מה הלקוח ביקש (מולא אוטומטית מהוואטסאפ)</b>
-      {order.ai_summary && <div className="ai-line">{order.ai_summary}</div>}
-      {rows.length > 0 && (
-        <dl className="ai-grid">
-          {rows.map(([k, label]) => (
-            <div key={k}>
-              <dt>{label}</dt>
-              <dd>{d[k]}</dd>
+    <a href={url} target="_blank" rel="noreferrer">
+      <img className="thumb" src={url} alt="תמונה מהלקוח" loading="lazy" />
+    </a>
+  );
+}
+
+/** טופס ההזמנה שה-AI ממלא מהודעות הוואטסאפ. שדה ריק מסומן, כדי שיהיה ברור מה חסר. */
+function OrderForm({ order, messages }: { order: Order; messages: Message[] }) {
+  const [open, setOpen] = useState(order.status === "new");
+  const d = order.ai_details ?? {};
+  const missing = d.missing ?? [];
+  const photos = messages.filter((m) => !m.author_id && m.kind === "image" && m.file_path && !m.file_deleted_at);
+  const rows: [string, string | undefined][] = [
+    ["שם", order.client_name],
+    ["טלפון", [order.client_phone, d.contact_phone].filter(Boolean).join(" · ")],
+    ["כתובת", [order.address, d.city && !order.address.includes(d.city) ? d.city : ""].filter(Boolean).join(", ")],
+    ...AI_DETAIL_LABEL.filter(([k]) => k !== "city" && k !== "contact_phone" && k !== "notes").map(
+      ([k, label]) => [label, d[k]] as [string, string | undefined],
+    ),
+    ["תאריך יעד", order.design_due ? fmtDay(order.design_due) : ""],
+    ["הערות", d.notes],
+  ];
+  return (
+    <div className="form-card">
+      <button className="form-head" onClick={() => setOpen(!open)}>
+        <span>טופס הזמנה</span>
+        {missing.length > 0 && <span className="chip w">חסרים {missing.length}</span>}
+        <span className="form-toggle">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="form-body">
+          {order.ai_summary && (
+            <dl className="form-row">
+              <dt>הסבר</dt>
+              <dd>{order.ai_summary}</dd>
+            </dl>
+          )}
+          <dl className="form-grid">
+            {rows.map(([label, v]) => (
+              <div key={label} className="form-row">
+                <dt>{label}</dt>
+                <dd className={v ? "" : "empty"}>{v || "—"}</dd>
+              </div>
+            ))}
+          </dl>
+          <dl className="form-row">
+            <dt>תמונות</dt>
+            <dd className={photos.length ? "thumbs" : "empty"}>
+              {photos.length ? photos.map((m) => <Thumb key={m.id} path={m.file_path!} />) : "—"}
+            </dd>
+          </dl>
+          {missing.length > 0 && (
+            <div className="ai-missing">
+              <span>עוד חסר:</span>
+              {missing.map((m) => (
+                <span key={m} className="chip w">
+                  {m}
+                </span>
+              ))}
             </div>
-          ))}
-        </dl>
-      )}
-      {missing.length > 0 && (
-        <div className="ai-missing">
-          <span>חסר:</span>
-          {missing.map((m) => (
-            <span key={m} className="chip w">
-              {m}
-            </span>
-          ))}
+          )}
         </div>
       )}
     </div>
