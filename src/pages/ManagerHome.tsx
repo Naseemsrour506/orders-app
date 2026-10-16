@@ -72,9 +72,10 @@ export function ManagerHome() {
   const orders = data?.orders ?? [];
   const teams = data?.teams ?? [];
   const mine = orders
-    .filter((o) => o.status === "new" || o.status === "review" || (o.status === "approved" && o.field_issue))
+    .filter((o) => o.status === "review" || (o.status === "approved" && o.field_issue))
     .sort(byPriority);
-  const designer = orders.filter((o) => o.status === "design" || o.status === "fix").sort(byPriority);
+  // הזמנה חדשה הולכת ישר לגרפיקאי
+  const designer = orders.filter((o) => o.status === "new" || o.status === "design" || o.status === "fix").sort(byPriority);
   const field = orders.filter((o) => o.status === "approved" && !o.field_issue).sort(byPriority);
   const done = orders.filter((o) => o.status === "done").sort((a, b) => (b.done_at ?? "").localeCompare(a.done_at ?? ""));
   // בלי צוותי שטח, "אושר" הוא סוף הדרך: מציגים את מה שאושר בשבוע האחרון

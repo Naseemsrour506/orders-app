@@ -425,15 +425,11 @@ function Actions({ order, teams, me, onChanged }: { order: Order; teams: Team[];
   return (
     <>
       <div className="dock">
+        {/* הזמנה חדשה כבר אצל הגרפיקאי, לא צריך לשלוח אליו */}
         {order.status === "new" && (
-          <>
-            <button className="cta" disabled={busy} onClick={() => act("send_to_designer", { p_order_id: order.id }, "נשלח לגרפיקאי")}>
-              שלח לגרפיקאי
-            </button>
-            <button className="cta ghost" disabled={busy} onClick={() => setSheet("approve")}>
-              {FIELD_TEAMS ? "ישר לביצוע" : "אשר בלי עיצוב"}
-            </button>
-          </>
+          <button className="cta ghost" disabled={busy} onClick={() => setSheet("approve")}>
+            {FIELD_TEAMS ? "ישר לביצוע" : "אשר בלי עיצוב"}
+          </button>
         )}
         {order.status === "review" && (
           <>

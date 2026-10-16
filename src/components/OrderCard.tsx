@@ -15,7 +15,7 @@ export function isCarried(o: Order): boolean {
 /** שורה אחת שאומרת מה צריך לקרות עכשיו, ומי צריך לעשות את זה */
 function waiting(o: Order, role?: Role): { t: string; mine: boolean } | null {
   if (role === "manager") {
-    if (o.status === "new") return { t: "מחכה לך: לשלוח לגרפיקאי", mine: true };
+    if (o.status === "new") return { t: "מחכה לגרפיקאי: עיצוב", mine: false };
     if (o.status === "review") return { t: "מחכה לך: לאשר את הטיוטה", mine: true };
     if (o.status === "design") return { t: "מחכה לגרפיקאי: טיוטה", mine: false };
     if (o.status === "fix") return { t: "מחכה לגרפיקאי: תיקון", mine: false };
